@@ -1843,6 +1843,11 @@ void CEvanGoldGrid::CheckGridShift(void)
             Print(">>> Triggering grid shift UP");
             ShiftGridUp();
          }
+         else if(is_below)
+         {
+            Print(">>> Triggering grid shift DOWN");
+            ShiftGridDown();
+         }
          m_consecutive_bars_outside = 0;
       }
    }
@@ -1906,6 +1911,63 @@ bool CEvanGoldGrid::ShiftGridUp(void)
    m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
    
    Print(">>> Grid shifted up by ", DoubleToString(shift_distance, _Digits), 
+         " New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
+   
+   return(true);
+}
+
+//+------------------------------------------------------------------+
+//| Shift grid down (move highest grid to bottom)                      |
+//+------------------------------------------------------------------+
+bool CEvanGoldGrid::ShiftGridDown(void)
+{
+   if(m_grid_cache_count < 2)
+      return(false);
+   
+   for(int i = 0; i < m_grid_cache_count; i++)
+   {
+      if(HasPositionForGrid(i))
+      {
+         Print(">>> Closing position at grid #", i, " before shift down");
+         ClosePositionAtGrid(i);
+         Sleep(10);
+      }
+      
+      if(HasPendingOrderForGrid(i))
+      {
+         string grid_tag = "Grid_" + IntegerToString(i) + "_";
+         for(int j = OrdersTotal() - 1; j >= 0; j--)
+         {
+            ulong ticket = OrderGetTicket(j);
+            if(ticket == 0) continue;
+            
+            if(OrderSelect(ticket))
+            {
+               if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && 
+                  OrderGetString(ORDER_SYMBOL) == _Symbol)
+               {
+                  string comment = OrderGetString(ORDER_COMMENT);
+                  if(StringFind(comment, grid_tag) == 0)
+                  {
+                     m_trade.OrderDelete(ticket);
+                     Print(">>> Deleted pending order at grid #", i);
+                  }
+               }
+            }
+         }
+      }
+   }
+   
+   double shift_distance = m_grid_spacing;
+   for(int i = 0; i < m_grid_cache_count; i++)
+   {
+      m_grid_cache[i].m_target_price -= shift_distance;
+   }
+   
+   m_grid_lower_price = m_grid_cache[0].m_target_price;
+   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   
+   Print(">>> Grid shifted down by ", DoubleToString(shift_distance, _Digits), 
          " New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
    
    return(true);
