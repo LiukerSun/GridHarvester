@@ -95,7 +95,6 @@ private:
    bool           m_is_grid_cache_valid;
    
    datetime m_last_check_time;
-   ulong    m_timer_handle;
    
    enum ENUM_CONTROL_IDS
    {
@@ -148,6 +147,10 @@ private:
    bool   HasOrderForPrice(const double price, const bool is_buy_order);
    bool   RefillOrderAtPrice(const double price, const bool is_buy_order);
    bool   PlaceRefillOrder(const ENUM_ORDER_TYPE order_type, const double price, const double lot_size, const double take_profit, const string comment);
+   
+   bool   HasPendingOrderForGrid(const int grid_index);
+   bool   HasPositionForGrid(const int grid_index);
+   bool   HasOrderForGridIndex(const int grid_index);
    
    void   OnTimer(void);
    
@@ -204,7 +207,6 @@ CEvanGoldGrid::CEvanGoldGrid(void)
    m_grid_cache_count = 0;
    m_is_grid_cache_valid = false;
    m_last_check_time = 0;
-   m_timer_handle = 0;
    
    m_profit_protection_enabled = true;
    m_profit_threshold = 80.0;
@@ -291,7 +293,7 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
       ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, true);
       ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, false);
       
-      m_timer_handle = ChartEventTimer(500);
+      EventSetTimer(1);
       
       CreateTradingPanel();
       UpdateDisplay();
@@ -320,8 +322,7 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
 void CEvanGoldGrid::Deinit(const int reason)
 {
    StopShiftThread();
-   if(m_timer_handle > 0)
-      ChartEventTimerRelease(m_timer_handle);
+   EventKillTimer();
    DeletePanelObjects();
 }
 
@@ -826,10 +827,7 @@ void CEvanGoldGrid::OnChartEvent(const int id, const long &lparam, const double 
    }
    else if(id == CHARTEVENT_TIMER)
    {
-      if(lparam == m_timer_handle)
-      {
-         OnTimer();
-      }
+      OnTimer();
    }
 }
 
@@ -1169,6 +1167,36 @@ void CEvanGoldGrid::CheckAndRefillGrid(void)
       Print(">>> Grid refill completed: ", refill_count, " orders placed");
       UpdateDisplay();
    }
+}
+
+//+------------------------------------------------------------------+
+//| Legacy compatibility functions for grid shift logic                |
+//+------------------------------------------------------------------+
+bool CEvanGoldGrid::HasPendingOrderForGrid(const int grid_index)
+{
+   if(grid_index < 0 || grid_index >= m_grid_cache_count)
+      return(false);
+   double price = m_grid_cache[grid_index].m_price;
+   bool is_buy = m_grid_cache[grid_index].m_is_buy_order;
+   return(HasPendingOrderForPrice(price, is_buy));
+}
+
+bool CEvanGoldGrid::HasPositionForGrid(const int grid_index)
+{
+   if(grid_index < 0 || grid_index >= m_grid_cache_count)
+      return(false);
+   double price = m_grid_cache[grid_index].m_price;
+   bool is_buy = m_grid_cache[grid_index].m_is_buy_order;
+   return(HasPositionForPrice(price, is_buy));
+}
+
+bool CEvanGoldGrid::HasOrderForGridIndex(const int grid_index)
+{
+   if(grid_index < 0 || grid_index >= m_grid_cache_count)
+      return(false);
+   double price = m_grid_cache[grid_index].m_price;
+   bool is_buy = m_grid_cache[grid_index].m_is_buy_order;
+   return(HasOrderForPrice(price, is_buy));
 }
 
 //+------------------------------------------------------------------+
