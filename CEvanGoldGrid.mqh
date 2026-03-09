@@ -1886,6 +1886,11 @@ bool CEvanGoldGrid::ShiftGridUp(int grids_to_shift)
    
    Print(">>> Shifting ", grids_to_shift, " grid(s) up");
    
+   double current_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double current_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double take_profit = GetEditValue(EDIT_TAKE_PROFIT);
+   double lot_size = GetEditValue(EDIT_LOT_SIZE);
+   
    for(int i = 0; i < grids_to_shift; i++)
    {
       if(HasPositionForGrid(i))
@@ -1921,8 +1926,71 @@ bool CEvanGoldGrid::ShiftGridUp(int grids_to_shift)
       
       double old_price = m_grid_cache[i].m_target_price;
       m_grid_cache[i].m_target_price = m_grid_cache[m_grid_cache_count - 1].m_target_price + m_grid_spacing;
-      Print(">>> Moved grid #", i, " from ", DoubleToString(old_price, _Digits), 
-            " to ", DoubleToString(m_grid_cache[i].m_target_price, _Digits));
+      double new_price = m_grid_cache[i].m_target_price;
+      
+      Print(">>> Moving grid #", i, " from ", DoubleToString(old_price, _Digits), 
+            " to ", DoubleToString(new_price, _Digits));
+      
+      ENUM_ORDER_TYPE order_type;
+      double tp;
+      string type_name;
+      
+      if(m_grid_cache[i].m_is_buy_order)
+      {
+         tp = new_price + take_profit;
+         if(new_price < current_ask)
+         {
+            order_type = ORDER_TYPE_BUY_LIMIT;
+            type_name = "BUY_LIMIT";
+         }
+         else
+         {
+            order_type = ORDER_TYPE_BUY_STOP;
+            type_name = "BUY_STOP";
+         }
+      }
+      else
+      {
+         tp = new_price - take_profit;
+         if(new_price > current_bid)
+         {
+            order_type = ORDER_TYPE_SELL_LIMIT;
+            type_name = "SELL_LIMIT";
+         }
+         else
+         {
+            order_type = ORDER_TYPE_SELL_STOP;
+            type_name = "SELL_STOP";
+         }
+      }
+      
+      string comment = "Grid_" + IntegerToString(i) + "_" + type_name;
+      
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+      
+      request.action = TRADE_ACTION_PENDING;
+      request.symbol = _Symbol;
+      request.volume = lot_size;
+      request.type = order_type;
+      request.price = NormalizeDouble(new_price, _Digits);
+      request.tp = NormalizeDouble(tp, _Digits);
+      request.type_time = ORDER_TIME_GTC;
+      request.type_filling = ORDER_FILLING_RETURN;
+      request.deviation = m_slippage;
+      request.magic = m_magic_number;
+      request.comment = comment;
+      
+      if(OrderSend(request, result))
+      {
+         Print(">>> Replaced order at grid #", i, " Ticket=", result.order, " Price=", DoubleToString(new_price, _Digits));
+      }
+      else
+      {
+         Print(">>> Failed to replace order at grid #", i, " RetCode=", result.retcode);
+      }
    }
    
    m_grid_lower_price = m_grid_cache[0].m_target_price;
@@ -1945,6 +2013,11 @@ bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
       grids_to_shift = m_grid_cache_count - 1;
    
    Print(">>> Shifting ", grids_to_shift, " grid(s) down");
+   
+   double current_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double current_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double take_profit = GetEditValue(EDIT_TAKE_PROFIT);
+   double lot_size = GetEditValue(EDIT_LOT_SIZE);
    
    for(int i = m_grid_cache_count - 1; i >= m_grid_cache_count - grids_to_shift; i--)
    {
@@ -1981,8 +2054,71 @@ bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
       
       double old_price = m_grid_cache[i].m_target_price;
       m_grid_cache[i].m_target_price = m_grid_cache[0].m_target_price - m_grid_spacing;
-      Print(">>> Moved grid #", i, " from ", DoubleToString(old_price, _Digits), 
-            " to ", DoubleToString(m_grid_cache[i].m_target_price, _Digits));
+      double new_price = m_grid_cache[i].m_target_price;
+      
+      Print(">>> Moving grid #", i, " from ", DoubleToString(old_price, _Digits), 
+            " to ", DoubleToString(new_price, _Digits));
+      
+      ENUM_ORDER_TYPE order_type;
+      double tp;
+      string type_name;
+      
+      if(m_grid_cache[i].m_is_buy_order)
+      {
+         tp = new_price + take_profit;
+         if(new_price < current_ask)
+         {
+            order_type = ORDER_TYPE_BUY_LIMIT;
+            type_name = "BUY_LIMIT";
+         }
+         else
+         {
+            order_type = ORDER_TYPE_BUY_STOP;
+            type_name = "BUY_STOP";
+         }
+      }
+      else
+      {
+         tp = new_price - take_profit;
+         if(new_price > current_bid)
+         {
+            order_type = ORDER_TYPE_SELL_LIMIT;
+            type_name = "SELL_LIMIT";
+         }
+         else
+         {
+            order_type = ORDER_TYPE_SELL_STOP;
+            type_name = "SELL_STOP";
+         }
+      }
+      
+      string comment = "Grid_" + IntegerToString(i) + "_" + type_name;
+      
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+      
+      request.action = TRADE_ACTION_PENDING;
+      request.symbol = _Symbol;
+      request.volume = lot_size;
+      request.type = order_type;
+      request.price = NormalizeDouble(new_price, _Digits);
+      request.tp = NormalizeDouble(tp, _Digits);
+      request.type_time = ORDER_TIME_GTC;
+      request.type_filling = ORDER_FILLING_RETURN;
+      request.deviation = m_slippage;
+      request.magic = m_magic_number;
+      request.comment = comment;
+      
+      if(OrderSend(request, result))
+      {
+         Print(">>> Replaced order at grid #", i, " Ticket=", result.order, " Price=", DoubleToString(new_price, _Digits));
+      }
+      else
+      {
+         Print(">>> Failed to replace order at grid #", i, " RetCode=", result.retcode);
+      }
    }
    
    m_grid_lower_price = m_grid_cache[0].m_target_price;
