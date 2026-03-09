@@ -160,20 +160,19 @@ private:
    void   CheckProfitProtection(void);
    void   StopAllTrading(void);
    void   ResetProfitProtection(void);
-   void   OnToggleProfitProtection(void);
-   
-   void   OnGenerateGrid(void);
-   void   OnCloseLosingPositions(void);
-   void   OnCloseProfitingPositions(void);
-   void   OnCloseAllPositions(void);
-   void   OnCancelAllPending(void);
-   void   OnCancelAndCloseAll(void);
-   void   OnRefreshCenterPrice(void);
-   void   OnToggleAutoRefill(void);
-   void   OnToggleGridMode(void);
-   void   OnTimer(void);
-   
-   void   StartShiftThread(void);
+    void   OnToggleProfitProtection(void);
+    
+    void   OnGenerateGrid(void);
+    void   OnCloseLosingPositions(void);
+    void   OnCloseProfitingPositions(void);
+    void   OnCloseAllPositions(void);
+    void   OnCancelAllPending(void);
+    void   OnCancelAndCloseAll(void);
+    void   OnRefreshCenterPrice(void);
+    void   OnToggleAutoRefill(void);
+    void   OnToggleGridMode(void);
+    
+    void   StartShiftThread(void);
    void   StopShiftThread(void);
    void   ShiftThreadFunc(void);
    void   CheckAndShiftGrids(void);
@@ -185,11 +184,12 @@ private:
 public:
             CEvanGoldGrid(void);
            ~CEvanGoldGrid(void);
-   
-   bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid);
-   void   Deinit(const int reason);
-   void   OnTick(void);
-   void   OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
+    
+    bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid);
+    void   Deinit(const int reason);
+    void   OnTick(void);
+    void   OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
+    void   OnTimer(void);
 };
 
 //+------------------------------------------------------------------+
