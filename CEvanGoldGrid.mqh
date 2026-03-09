@@ -85,7 +85,6 @@ private:
    int    m_shift_trigger_bars;
    double m_grid_upper_price;
    double m_grid_lower_price;
-   int    m_consecutive_bars_outside;
    datetime m_last_bar_time;
    
    SGridCacheInfo m_grid_cache[];
@@ -167,7 +166,9 @@ private:
    void   OnToggleGridMode(void);
    
    void   CheckGridShift(void);
-   bool   ShiftGridUp(void);
+   int    CalculateShiftCount(double current_price, double boundary_price, bool is_up);
+   bool   ShiftGridUp(int grids_to_shift);
+   bool   ShiftGridDown(int grids_to_shift);
    bool   ClosePositionAtGrid(const int grid_index);
    bool   MoveGridOrder(const int from_index, const int to_index);
 
@@ -205,6 +206,12 @@ CEvanGoldGrid::CEvanGoldGrid(void)
    
    m_initial_equity = 0.0;
    m_max_loss_amount = 500.0;
+   
+   m_auto_shift_grid = false;
+   m_shift_trigger_bars = 3;
+   m_grid_upper_price = 0;
+   m_grid_lower_price = 0;
+   m_last_bar_time = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -248,7 +255,6 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
    m_initial_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    m_grid_upper_price = 0;
    m_grid_lower_price = 0;
-   m_consecutive_bars_outside = 0;
    m_last_bar_time = 0;
    
    m_trade.SetExpertMagicNumber(m_magic_number);
@@ -1830,48 +1836,61 @@ void CEvanGoldGrid::CheckGridShift(void)
    bool is_above = current_price > m_grid_upper_price;
    bool is_below = current_price < m_grid_lower_price;
    
-   if(is_above || is_below)
+   if(is_above)
    {
-      m_consecutive_bars_outside++;
-      Print(">>> Price outside grid: Bar=", m_consecutive_bars_outside, "/", m_shift_trigger_bars, 
-            " Price=", current_price, " Range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
-      
-      if(m_consecutive_bars_outside >= m_shift_trigger_bars)
+      int grids_to_shift = CalculateShiftCount(current_price, m_grid_upper_price, true);
+      if(grids_to_shift > 0)
       {
-         if(is_above)
-         {
-            Print(">>> Triggering grid shift UP");
-            ShiftGridUp();
-         }
-         else if(is_below)
-         {
-            Print(">>> Triggering grid shift DOWN");
-            ShiftGridDown();
-         }
-         m_consecutive_bars_outside = 0;
+         Print(">>> Price above grid, need to shift ", grids_to_shift, " grid(s) up");
+         ShiftGridUp(grids_to_shift);
       }
    }
-   else
+   else if(is_below)
    {
-      m_consecutive_bars_outside = 0;
+      int grids_to_shift = CalculateShiftCount(current_price, m_grid_lower_price, false);
+      if(grids_to_shift > 0)
+      {
+         Print(">>> Price below grid, need to shift ", grids_to_shift, " grid(s) down");
+         ShiftGridDown(grids_to_shift);
+      }
    }
 }
 
 //+------------------------------------------------------------------+
-//| Shift grid up (move lowest grid to top)                            |
+//| Calculate how many grids to shift                                  |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::ShiftGridUp(void)
+int CEvanGoldGrid::CalculateShiftCount(double current_price, double boundary_price, bool is_up)
 {
-   if(m_grid_cache_count < 2)
+   double distance = MathAbs(current_price - boundary_price);
+   int grids_needed = (int)(distance / m_grid_spacing) + 1;
+   
+   if(grids_needed >= m_grid_cache_count)
+   {
+      grids_needed = m_grid_cache_count - 1;
+      Print(">>> Warning: Price too far, limiting shift to ", grids_needed, " grids");
+   }
+   
+   return(grids_needed);
+}
+
+//+------------------------------------------------------------------+
+//| Shift grid up (move lowest grids to top)                           |
+//+------------------------------------------------------------------+
+bool CEvanGoldGrid::ShiftGridUp(int grids_to_shift)
+{
+   if(m_grid_cache_count < 2 || grids_to_shift <= 0)
       return(false);
    
-   int shifted = 0;
+   if(grids_to_shift >= m_grid_cache_count)
+      grids_to_shift = m_grid_cache_count - 1;
    
-   for(int i = 0; i < m_grid_cache_count; i++)
+   Print(">>> Shifting ", grids_to_shift, " grid(s) up");
+   
+   for(int i = 0; i < grids_to_shift; i++)
    {
       if(HasPositionForGrid(i))
       {
-         Print(">>> Closing position at grid #", i, " before shift");
+         Print(">>> Closing position at grid #", i);
          ClosePositionAtGrid(i);
          Sleep(10);
       }
@@ -1899,36 +1918,39 @@ bool CEvanGoldGrid::ShiftGridUp(void)
             }
          }
       }
-   }
-   
-   double shift_distance = m_grid_spacing;
-   for(int i = 0; i < m_grid_cache_count; i++)
-   {
-      m_grid_cache[i].m_target_price += shift_distance;
+      
+      double old_price = m_grid_cache[i].m_target_price;
+      m_grid_cache[i].m_target_price = m_grid_cache[m_grid_cache_count - 1].m_target_price + m_grid_spacing;
+      Print(">>> Moved grid #", i, " from ", DoubleToString(old_price, _Digits), 
+            " to ", DoubleToString(m_grid_cache[i].m_target_price, _Digits));
    }
    
    m_grid_lower_price = m_grid_cache[0].m_target_price;
    m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
    
-   Print(">>> Grid shifted up by ", DoubleToString(shift_distance, _Digits), 
-         " New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
+   Print(">>> Grid shifted up. New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
    
    return(true);
 }
 
 //+------------------------------------------------------------------+
-//| Shift grid down (move highest grid to bottom)                      |
+//| Shift grid down (move highest grids to bottom)                     |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::ShiftGridDown(void)
+bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
 {
-   if(m_grid_cache_count < 2)
+   if(m_grid_cache_count < 2 || grids_to_shift <= 0)
       return(false);
    
-   for(int i = 0; i < m_grid_cache_count; i++)
+   if(grids_to_shift >= m_grid_cache_count)
+      grids_to_shift = m_grid_cache_count - 1;
+   
+   Print(">>> Shifting ", grids_to_shift, " grid(s) down");
+   
+   for(int i = m_grid_cache_count - 1; i >= m_grid_cache_count - grids_to_shift; i--)
    {
       if(HasPositionForGrid(i))
       {
-         Print(">>> Closing position at grid #", i, " before shift down");
+         Print(">>> Closing position at grid #", i);
          ClosePositionAtGrid(i);
          Sleep(10);
       }
@@ -1956,19 +1978,17 @@ bool CEvanGoldGrid::ShiftGridDown(void)
             }
          }
       }
-   }
-   
-   double shift_distance = m_grid_spacing;
-   for(int i = 0; i < m_grid_cache_count; i++)
-   {
-      m_grid_cache[i].m_target_price -= shift_distance;
+      
+      double old_price = m_grid_cache[i].m_target_price;
+      m_grid_cache[i].m_target_price = m_grid_cache[0].m_target_price - m_grid_spacing;
+      Print(">>> Moved grid #", i, " from ", DoubleToString(old_price, _Digits), 
+            " to ", DoubleToString(m_grid_cache[i].m_target_price, _Digits));
    }
    
    m_grid_lower_price = m_grid_cache[0].m_target_price;
    m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
    
-   Print(">>> Grid shifted down by ", DoubleToString(shift_distance, _Digits), 
-         " New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
+   Print(">>> Grid shifted down. New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
    
    return(true);
 }
