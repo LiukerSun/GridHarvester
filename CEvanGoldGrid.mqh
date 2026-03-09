@@ -152,8 +152,6 @@ private:
    bool   HasPositionForGrid(const int grid_index);
    bool   HasOrderForGridIndex(const int grid_index);
    
-   void   OnTimer(void);
-   
    void   CreateDualSideOrder(SGridOrderInfo &orders[], int &order_index, const int grid_index, const double price, const bool is_buy_order, const double current_ask, const double current_bid, const double take_profit);
    bool   HasBuyOrderForGrid(const int grid_index);
    bool   HasSellOrderForGrid(const int grid_index);
@@ -173,6 +171,7 @@ private:
    void   OnRefreshCenterPrice(void);
    void   OnToggleAutoRefill(void);
    void   OnToggleGridMode(void);
+   void   OnTimer(void);
    
    void   StartShiftThread(void);
    void   StopShiftThread(void);
