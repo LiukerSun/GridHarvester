@@ -90,8 +90,8 @@ MQL5/Experts/EvanGoldGrid/
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `InpCenterPrice` | double | 0 | 网格中心价格 (0 = 使用当前市价) |
-| `InpGridCount` | int | 100 | 网格数量 |
+| `InpCenterPrice` | double | 0 | 网格中心价格 (0 = 生成网格时自动使用市价) |
+| `InpGridCount` | int | 100 | 网格数量 (受最大订单数限制) |
 | `InpGridMode` | int | 0 | 交易模式 (0=做多，1=做空，2=交替，3=双边) |
 | `InpGridSpacing` | double | 1.0 | 网格间距 (点数) |
 | `InpTakeProfit` | double | 1.0 | 止盈点数 |
@@ -145,6 +145,7 @@ MQL5/Experts/EvanGoldGrid/
    - 或在面板的编辑框中直接修改
 
 3. **刷新中心价格**: 点击"刷新"按钮，将中心价格设置为当前市场价格
+   - 中心价格为 0 时，生成网格时会自动使用当前市价
 
 4. **选择交易模式**: 点击模式按钮切换 (做多 → 做空 → 多空交替 → 双边网格)
 
