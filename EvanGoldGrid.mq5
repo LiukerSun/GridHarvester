@@ -42,6 +42,9 @@ input group "=== Grid Shift ==="
 input bool      InpAutoShiftGrid    = false;
 input int       InpShiftTriggerBars = 3;
 
+input group "=== Auto Start ==="
+input bool      InpAutoStartGrid    = true;
+
 input group "=== Panel Settings ==="
 input color     InpPanelBgColor = clrDimGray;
 input color     InpButtonColor  = clrDodgerBlue;
@@ -88,7 +91,8 @@ int OnInit()
       InpPanelY,
       InpMaxLossUSD,
       InpAutoShiftGrid,
-      InpShiftTriggerBars))
+      InpShiftTriggerBars,
+      InpAutoStartGrid))
    {
       Print("Expert advisor initialization failed");
       delete g_expert;

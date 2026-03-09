@@ -89,6 +89,7 @@ private:
    
    int    m_shift_thread_id;
    bool   m_shift_thread_running;
+   bool   m_auto_start_grid;
    
    SGridCacheInfo m_grid_cache[];
    int            m_grid_cache_count;
@@ -181,7 +182,7 @@ public:
             CEvanGoldGrid(void);
            ~CEvanGoldGrid(void);
    
-   bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars);
+   bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid);
    void   Deinit(const int reason);
    void   OnTick(void);
    void   OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
@@ -220,6 +221,7 @@ CEvanGoldGrid::CEvanGoldGrid(void)
    
    m_shift_thread_id = 0;
    m_shift_thread_running = false;
+   m_auto_start_grid = false;
 }
 
 //+------------------------------------------------------------------+
@@ -233,7 +235,7 @@ CEvanGoldGrid::~CEvanGoldGrid(void)
 //+------------------------------------------------------------------+
 //| Initialize the expert with input parameters                        |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars)
+bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid)
 {
    m_center_price = center_price;
    m_grid_count = grid_count;
@@ -258,6 +260,7 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
    m_max_loss_amount = max_loss_amount;
    m_auto_shift_grid = auto_shift_grid;
    m_shift_trigger_bars = shift_trigger_bars;
+   m_auto_start_grid = auto_start_grid;
    
    m_current_grid_mode = m_grid_mode;
    m_initial_equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -277,13 +280,30 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
    m_trade.SetTypeFilling(ORDER_FILLING_RETURN);
    m_trade.SetAsyncMode(true);
    
-   ChartSetInteger(0, CHART_EVENT_OBJECT_CREATE, true);
-   ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, true);
-   ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, false);
+   bool is_backtest = (MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION));
    
-   CreateTradingPanel();
-   UpdateDisplay();
-   ChartRedraw();
+   if(!is_backtest)
+   {
+      ChartSetInteger(0, CHART_EVENT_OBJECT_CREATE, true);
+      ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, true);
+      ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, false);
+      
+      CreateTradingPanel();
+      UpdateDisplay();
+      ChartRedraw();
+   }
+   else
+   {
+      Print("=== Running in backtest/optimization mode - Panel disabled ===");
+      Print("=== Grid Count: ", m_grid_count, ", Spacing: ", m_grid_spacing, ", TP: ", m_take_profit);
+      
+      if(m_auto_start_grid)
+      {
+         Print("=== Auto start enabled, generating grid... ===");
+         Sleep(100);
+         GenerateGrid();
+      }
+   }
    
    Print("=== CEvanGoldGrid initialization completed ===");
    return(true);
