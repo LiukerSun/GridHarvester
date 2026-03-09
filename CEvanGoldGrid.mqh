@@ -81,6 +81,13 @@ private:
    double m_initial_equity;
    double m_max_loss_amount;
    
+   bool   m_auto_shift_grid;
+   int    m_shift_trigger_bars;
+   double m_grid_upper_price;
+   double m_grid_lower_price;
+   int    m_consecutive_bars_outside;
+   datetime m_last_bar_time;
+   
    SGridCacheInfo m_grid_cache[];
    int            m_grid_cache_count;
    bool           m_is_grid_cache_valid;
@@ -158,12 +165,17 @@ private:
    void   OnRefreshCenterPrice(void);
    void   OnToggleAutoRefill(void);
    void   OnToggleGridMode(void);
+   
+   void   CheckGridShift(void);
+   bool   ShiftGridUp(void);
+   bool   ClosePositionAtGrid(const int grid_index);
+   bool   MoveGridOrder(const int from_index, const int to_index);
 
 public:
             CEvanGoldGrid(void);
            ~CEvanGoldGrid(void);
    
-   bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount);
+   bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars);
    void   Deinit(const int reason);
    void   OnTick(void);
    void   OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
@@ -206,7 +218,7 @@ CEvanGoldGrid::~CEvanGoldGrid(void)
 //+------------------------------------------------------------------+
 //| Initialize the expert with input parameters                        |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount)
+bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars)
 {
    m_center_price = center_price;
    m_grid_count = grid_count;
@@ -229,9 +241,15 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
    m_panel_x = panel_x;
    m_panel_y = panel_y;
    m_max_loss_amount = max_loss_amount;
+   m_auto_shift_grid = auto_shift_grid;
+   m_shift_trigger_bars = shift_trigger_bars;
    
    m_current_grid_mode = m_grid_mode;
    m_initial_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   m_grid_upper_price = 0;
+   m_grid_lower_price = 0;
+   m_consecutive_bars_outside = 0;
+   m_last_bar_time = 0;
    
    m_trade.SetExpertMagicNumber(m_magic_number);
    m_trade.SetDeviationInPoints(m_slippage);
@@ -709,6 +727,11 @@ void CEvanGoldGrid::OnTick(void)
    if(m_trading_stopped)
       return;
    
+   if(m_auto_shift_grid && m_is_grid_cache_valid)
+   {
+      CheckGridShift();
+   }
+   
    CheckAndRefillGrid();
    
    static datetime last_update = 0;
@@ -964,7 +987,13 @@ void CEvanGoldGrid::GenerateGrid(void)
    m_is_grid_cache_valid = true;
    m_manual_intervention = false;
    
-   Print(">>> Grid cache created: ", m_grid_cache_count, " grids, auto refill enabled");
+   if(m_grid_cache_count > 0)
+   {
+      m_grid_lower_price = m_grid_cache[0].m_target_price;
+      m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   }
+   
+   Print(">>> Grid cache created: ", m_grid_cache_count, " grids, Range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
    
    uint start_time = GetTickCount();
    int success_count = BatchPlaceOrders(orders, lot_size);
@@ -1772,10 +1801,166 @@ void CEvanGoldGrid::OnToggleProfitProtection(void)
       ResetProfitProtection();
    }
    
-   string protect_text = m_profit_protection_enabled ? "盈利保护:开" : "盈利保护:关";
+   string protect_text = m_profit_protection_enabled ? "盈利保护：开" : "盈利保护：关";
    color protect_color = m_profit_protection_enabled ? clrLimeGreen : clrGray;
    ObjectSetString(0, "BTN_PROFIT_PROTECT", OBJPROP_TEXT, protect_text);
    ObjectSetInteger(0, "BTN_PROFIT_PROTECT", OBJPROP_BGCOLOR, protect_color);
    ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Check if grid shift is needed                                      |
+//+------------------------------------------------------------------+
+void CEvanGoldGrid::CheckGridShift(void)
+{
+   if(m_grid_cache_count == 0 || !m_is_grid_cache_valid)
+      return;
+   
+   datetime current_bar_time = iTime(_Symbol, PERIOD_CURRENT, 0);
+   if(current_bar_time == m_last_bar_time)
+      return;
+   
+   m_last_bar_time = current_bar_time;
+   
+   double current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   m_grid_lower_price = m_grid_cache[0].m_target_price;
+   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   
+   bool is_above = current_price > m_grid_upper_price;
+   bool is_below = current_price < m_grid_lower_price;
+   
+   if(is_above || is_below)
+   {
+      m_consecutive_bars_outside++;
+      Print(">>> Price outside grid: Bar=", m_consecutive_bars_outside, "/", m_shift_trigger_bars, 
+            " Price=", current_price, " Range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
+      
+      if(m_consecutive_bars_outside >= m_shift_trigger_bars)
+      {
+         if(is_above)
+         {
+            Print(">>> Triggering grid shift UP");
+            ShiftGridUp();
+         }
+         m_consecutive_bars_outside = 0;
+      }
+   }
+   else
+   {
+      m_consecutive_bars_outside = 0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Shift grid up (move lowest grid to top)                            |
+//+------------------------------------------------------------------+
+bool CEvanGoldGrid::ShiftGridUp(void)
+{
+   if(m_grid_cache_count < 2)
+      return(false);
+   
+   int shifted = 0;
+   
+   for(int i = 0; i < m_grid_cache_count; i++)
+   {
+      if(HasPositionForGrid(i))
+      {
+         Print(">>> Closing position at grid #", i, " before shift");
+         ClosePositionAtGrid(i);
+         Sleep(10);
+      }
+      
+      if(HasPendingOrderForGrid(i))
+      {
+         string grid_tag = "Grid_" + IntegerToString(i) + "_";
+         for(int j = OrdersTotal() - 1; j >= 0; j--)
+         {
+            ulong ticket = OrderGetTicket(j);
+            if(ticket == 0) continue;
+            
+            if(OrderSelect(ticket))
+            {
+               if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && 
+                  OrderGetString(ORDER_SYMBOL) == _Symbol)
+               {
+                  string comment = OrderGetString(ORDER_COMMENT);
+                  if(StringFind(comment, grid_tag) == 0)
+                  {
+                     m_trade.OrderDelete(ticket);
+                     Print(">>> Deleted pending order at grid #", i);
+                  }
+               }
+            }
+         }
+      }
+   }
+   
+   double shift_distance = m_grid_spacing;
+   for(int i = 0; i < m_grid_cache_count; i++)
+   {
+      m_grid_cache[i].m_target_price += shift_distance;
+   }
+   
+   m_grid_lower_price = m_grid_cache[0].m_target_price;
+   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   
+   Print(">>> Grid shifted up by ", DoubleToString(shift_distance, _Digits), 
+         " New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
+   
+   return(true);
+}
+
+//+------------------------------------------------------------------+
+//| Close position at specific grid index                              |
+//+------------------------------------------------------------------+
+bool CEvanGoldGrid::ClosePositionAtGrid(const int grid_index)
+{
+   string grid_tag = "Grid_" + IntegerToString(grid_index) + "_";
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetInteger(POSITION_MAGIC) == m_magic_number && 
+            PositionGetString(POSITION_SYMBOL) == _Symbol)
+         {
+            string comment = PositionGetString(POSITION_COMMENT);
+            if(StringFind(comment, grid_tag) == 0)
+            {
+               if(m_trade.PositionClose(ticket))
+               {
+                  Print(">>> Closed position at grid #", grid_index, " Ticket=", ticket);
+                  return(true);
+               }
+               else
+               {
+                  Print(">>> Failed to close position at grid #", grid_index, " RetCode=", m_trade.ResultRetcode());
+               }
+            }
+         }
+      }
+   }
+   return(false);
+}
+
+//+------------------------------------------------------------------+
+//| Move grid order from one index to another                          |
+//+------------------------------------------------------------------+
+bool CEvanGoldGrid::MoveGridOrder(const int from_index, const int to_index)
+{
+   if(from_index < 0 || from_index >= m_grid_cache_count ||
+      to_index < 0 || to_index >= m_grid_cache_count)
+      return(false);
+   
+   double new_price = m_grid_cache[to_index].m_target_price;
+   bool is_buy = m_grid_cache[from_index].m_is_buy_order;
+   
+   Print(">>> Moving order from grid #", from_index, " to #", to_index, " Price=", DoubleToString(new_price, _Digits));
+   
+   return(true);
 }
 //+------------------------------------------------------------------+

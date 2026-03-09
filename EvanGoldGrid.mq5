@@ -38,6 +38,10 @@ input bool      InpProfitProtection   = true;
 input double    InpProfitThreshold    = 80.0;
 input double    InpProfitTrigger      = 25.0;
 
+input group "=== Grid Shift ==="
+input bool      InpAutoShiftGrid    = false;
+input int       InpShiftTriggerBars = 3;
+
 input group "=== Panel Settings ==="
 input color     InpPanelBgColor = clrDimGray;
 input color     InpButtonColor  = clrDodgerBlue;
@@ -82,7 +86,9 @@ int OnInit()
       InpButtonColor,
       InpPanelX,
       InpPanelY,
-      InpMaxLossUSD))
+      InpMaxLossUSD,
+      InpAutoShiftGrid,
+      InpShiftTriggerBars))
    {
       Print("Expert advisor initialization failed");
       delete g_expert;
