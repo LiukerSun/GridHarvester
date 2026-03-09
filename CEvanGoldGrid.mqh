@@ -1152,7 +1152,7 @@ bool CEvanGoldGrid::HasPendingOrderForGrid(const int grid_index)
 }
 
 //+------------------------------------------------------------------+
-//| Check if grid index has position                                   |
+//| Check and shift grids based on current price                       |
 //+------------------------------------------------------------------+
 bool CEvanGoldGrid::HasPositionForGrid(const int grid_index)
 {
