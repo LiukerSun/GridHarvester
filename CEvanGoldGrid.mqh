@@ -898,14 +898,19 @@ void CEvanGoldGrid::OnRefreshCenterPrice(void)
 //+------------------------------------------------------------------+
 void CEvanGoldGrid::GenerateGrid(void)
 {
-   double center_price = GetEditValue(EDIT_CENTER_PRICE);
-   int grid_count = GetEditIntValue(EDIT_GRID_COUNT);
-   double grid_spacing = GetEditValue(EDIT_GRID_SPACING);
-   double take_profit = GetEditValue(EDIT_TAKE_PROFIT);
-   double lot_size = GetEditValue(EDIT_LOT_SIZE);
+   bool is_backtest = (MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION));
+   
+   double center_price = is_backtest ? m_center_price : GetEditValue(EDIT_CENTER_PRICE);
+   int grid_count = is_backtest ? m_grid_count : GetEditIntValue(EDIT_GRID_COUNT);
+   double grid_spacing = is_backtest ? m_grid_spacing : GetEditValue(EDIT_GRID_SPACING);
+   double take_profit = is_backtest ? m_take_profit : GetEditValue(EDIT_TAKE_PROFIT);
+   double lot_size = is_backtest ? m_lot_size : GetEditValue(EDIT_LOT_SIZE);
    
    if(grid_count <= 0 || grid_spacing <= 0 || lot_size <= 0)
+   {
+      Print("GenerateGrid failed: Invalid parameters. Count=", grid_count, " Spacing=", grid_spacing, " Lot=", lot_size);
       return;
+   }
    
    if(center_price <= 0)
    {
@@ -916,7 +921,10 @@ void CEvanGoldGrid::GenerateGrid(void)
    }
    
    if(!IsTradingTime())
+   {
+      Print("GenerateGrid: Not in trading time");
       return;
+   }
    
    int current_orders = CountMyOrders();
    if(current_orders >= m_max_orders)
