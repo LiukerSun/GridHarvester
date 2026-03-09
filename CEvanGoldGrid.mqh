@@ -1232,8 +1232,9 @@ bool CEvanGoldGrid::HasOrderForGridIndex(const int grid_index)
 //+------------------------------------------------------------------+
 bool CEvanGoldGrid::RefillOrderAtIndex(const int grid_index)
 {
-   double take_profit = GetEditValue(EDIT_TAKE_PROFIT);
-   double lot_size = GetEditValue(EDIT_LOT_SIZE);
+   bool is_backtest = (MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION));
+   double take_profit = is_backtest ? m_take_profit : GetEditValue(EDIT_TAKE_PROFIT);
+   double lot_size = is_backtest ? m_lot_size : GetEditValue(EDIT_LOT_SIZE);
    
    if(lot_size <= 0)
    {
@@ -2002,8 +2003,9 @@ bool CEvanGoldGrid::ShiftGridUp(int grids_to_shift)
    
    double current_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double current_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double take_profit = GetEditValue(EDIT_TAKE_PROFIT);
-   double lot_size = GetEditValue(EDIT_LOT_SIZE);
+   bool is_backtest = (MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION));
+   double take_profit = is_backtest ? m_take_profit : GetEditValue(EDIT_TAKE_PROFIT);
+   double lot_size = is_backtest ? m_lot_size : GetEditValue(EDIT_LOT_SIZE);
    
    for(int i = 0; i < grids_to_shift; i++)
    {
@@ -2130,8 +2132,9 @@ bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
    
    double current_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double current_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double take_profit = GetEditValue(EDIT_TAKE_PROFIT);
-   double lot_size = GetEditValue(EDIT_LOT_SIZE);
+   bool is_backtest = (MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION));
+   double take_profit = is_backtest ? m_take_profit : GetEditValue(EDIT_TAKE_PROFIT);
+   double lot_size = is_backtest ? m_lot_size : GetEditValue(EDIT_LOT_SIZE);
    
    for(int i = m_grid_cache_count - 1; i >= m_grid_cache_count - grids_to_shift; i--)
    {
