@@ -13,8 +13,7 @@
 //+------------------------------------------------------------------+
 struct SGridCacheInfo
 {
-   int    m_grid_index;
-   double m_target_price;
+   double m_price;
    bool   m_is_buy_order;
    bool   m_has_pending;
    bool   m_has_position;
@@ -96,6 +95,7 @@ private:
    bool           m_is_grid_cache_valid;
    
    datetime m_last_check_time;
+   ulong    m_timer_handle;
    
    enum ENUM_CONTROL_IDS
    {
@@ -143,11 +143,13 @@ private:
    void   BatchClosePositions(const bool close_loss_only, const bool close_profit_only);
    
    void   CheckAndRefillGrid(void);
-   bool   HasPendingOrderForGrid(const int grid_index);
-   bool   HasPositionForGrid(const int grid_index);
-   bool   HasOrderForGridIndex(const int grid_index);
-   bool   RefillOrderAtIndex(const int grid_index);
+   bool   HasPendingOrderForPrice(const double price, const bool is_buy_order);
+   bool   HasPositionForPrice(const double price, const bool is_buy_order);
+   bool   HasOrderForPrice(const double price, const bool is_buy_order);
+   bool   RefillOrderAtPrice(const double price, const bool is_buy_order);
    bool   PlaceRefillOrder(const ENUM_ORDER_TYPE order_type, const double price, const double lot_size, const double take_profit, const string comment);
+   
+   void   OnTimer(void);
    
    void   CreateDualSideOrder(SGridOrderInfo &orders[], int &order_index, const int grid_index, const double price, const bool is_buy_order, const double current_ask, const double current_bid, const double take_profit);
    bool   HasBuyOrderForGrid(const int grid_index);
@@ -202,6 +204,7 @@ CEvanGoldGrid::CEvanGoldGrid(void)
    m_grid_cache_count = 0;
    m_is_grid_cache_valid = false;
    m_last_check_time = 0;
+   m_timer_handle = 0;
    
    m_profit_protection_enabled = true;
    m_profit_threshold = 80.0;
@@ -288,6 +291,8 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
       ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, true);
       ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, false);
       
+      m_timer_handle = ChartEventTimer(500);
+      
       CreateTradingPanel();
       UpdateDisplay();
       ChartRedraw();
@@ -315,6 +320,8 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
 void CEvanGoldGrid::Deinit(const int reason)
 {
    StopShiftThread();
+   if(m_timer_handle > 0)
+      ChartEventTimerRelease(m_timer_handle);
    DeletePanelObjects();
 }
 
@@ -774,8 +781,6 @@ void CEvanGoldGrid::OnTick(void)
       ShiftThreadFunc();
    }
    
-   CheckAndRefillGrid();
-   
    static datetime last_update = 0;
    if(TimeCurrent() - last_update >= 1)
    {
@@ -817,6 +822,13 @@ void CEvanGoldGrid::OnChartEvent(const int id, const long &lparam, const double 
          
          ObjectSetInteger(0, clicked_obj, OBJPROP_STATE, false);
          ChartRedraw();
+      }
+   }
+   else if(id == CHARTEVENT_TIMER)
+   {
+      if(lparam == m_timer_handle)
+      {
+         OnTimer();
       }
    }
 }
@@ -894,6 +906,17 @@ void CEvanGoldGrid::OnRefreshCenterPrice(void)
 }
 
 //+------------------------------------------------------------------+
+//| Timer event handler - called every 500ms                           |
+//+------------------------------------------------------------------+
+void CEvanGoldGrid::OnTimer(void)
+{
+   if(m_auto_refill_enabled && !m_manual_intervention && m_is_grid_cache_valid && m_grid_cache_count > 0)
+   {
+      CheckAndRefillGrid();
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Generate grid orders                                               |
 //+------------------------------------------------------------------+
 void CEvanGoldGrid::GenerateGrid(void)
@@ -946,10 +969,10 @@ void CEvanGoldGrid::GenerateGrid(void)
    double grid_prices[];
    ArrayResize(grid_prices, max_grids);
    
-   double start_offset = -((max_grids - 1) / 2.0) * grid_spacing;
+   int half_grids = max_grids / 2;
    for(int i = 0; i < max_grids; i++)
    {
-      grid_prices[i] = center_price + start_offset + (i * grid_spacing);
+      grid_prices[i] = NormalizeDouble(center_price + (i - half_grids) * grid_spacing, _Digits);
    }
    
    Print("Grid price range: ", DoubleToString(grid_prices[0], _Digits), " ~ ", DoubleToString(grid_prices[max_grids - 1], _Digits));
@@ -1014,7 +1037,7 @@ void CEvanGoldGrid::GenerateGrid(void)
          orders[order_index].m_price = price;
          orders[order_index].m_tp = tp;
          orders[order_index].m_is_buy_order = is_buy_order;
-         orders[order_index].m_comment = "Grid_" + IntegerToString(i) + "_" + type_name;
+         orders[order_index].m_comment = "GP_" + DoubleToString(price, _Digits) + "_" + type_name;
          Print("Order #", order_index + 1, ": Index=", i, " Price=", DoubleToString(price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp, _Digits));
          order_index++;
       }
@@ -1023,8 +1046,7 @@ void CEvanGoldGrid::GenerateGrid(void)
    ArrayResize(m_grid_cache, max_grids);
    for(int i = 0; i < max_grids; i++)
    {
-      m_grid_cache[i].m_grid_index = i;
-      m_grid_cache[i].m_target_price = grid_prices[i];
+      m_grid_cache[i].m_price = grid_prices[i];
       m_grid_cache[i].m_is_buy_order = (m_current_grid_mode == 0 || (m_current_grid_mode == 2 && i % 2 == 0));
       m_grid_cache[i].m_has_pending = false;
       m_grid_cache[i].m_has_position = false;
@@ -1039,8 +1061,8 @@ void CEvanGoldGrid::GenerateGrid(void)
    
    if(m_grid_cache_count > 0)
    {
-      m_grid_lower_price = m_grid_cache[0].m_target_price;
-      m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+      m_grid_lower_price = m_grid_cache[0].m_price;
+      m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_price;
    }
    
    Print(">>> Grid cache created: ", m_grid_cache_count, " grids, Range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
@@ -1126,15 +1148,16 @@ void CEvanGoldGrid::CheckAndRefillGrid(void)
       return;
    m_last_check_time = current_time;
    
-   Print(">>> Grid check: Cached=", m_grid_cache_count, ", TotalOrders=", CountMyOrders(), ", Max=", m_max_orders);
-   
    int refill_count = 0;
    for(int i = 0; i < m_grid_cache_count; i++)
    {
-      if(!HasOrderForGridIndex(i))
+      double price = m_grid_cache[i].m_price;
+      bool is_buy = m_grid_cache[i].m_is_buy_order;
+      
+      if(!HasOrderForPrice(price, is_buy))
       {
-         Print(">>> Vacant grid index #", i, " at price=", DoubleToString(m_grid_cache[i].m_target_price, _Digits));
-         if(RefillOrderAtIndex(i))
+         Print(">>> Vacant grid at price=", DoubleToString(price, _Digits), " IsBuy=", is_buy);
+         if(RefillOrderAtPrice(price, is_buy))
             refill_count++;
          if(refill_count >= 10)
             break;
@@ -1149,11 +1172,12 @@ void CEvanGoldGrid::CheckAndRefillGrid(void)
 }
 
 //+------------------------------------------------------------------+
-//| Check if grid index has pending order                              |
+//| Check if price has pending order                                   |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::HasPendingOrderForGrid(const int grid_index)
+bool CEvanGoldGrid::HasPendingOrderForPrice(const double price, const bool is_buy_order)
 {
-   string grid_tag = "Grid_" + IntegerToString(grid_index) + "_";
+   string price_str = DoubleToString(price, _Digits);
+   string order_prefix = "GP_" + price_str + "_";
    
    for(int i = 0; i < OrdersTotal(); i++)
    {
@@ -1165,9 +1189,9 @@ bool CEvanGoldGrid::HasPendingOrderForGrid(const int grid_index)
          if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && OrderGetString(ORDER_SYMBOL) == _Symbol)
          {
             string comment = OrderGetString(ORDER_COMMENT);
-            if(StringFind(comment, grid_tag) == 0)
+            if(StringFind(comment, order_prefix) == 0)
             {
-               string rest = StringSubstr(comment, StringLen(grid_tag));
+               string rest = StringSubstr(comment, StringLen(order_prefix));
                if(StringFind(rest, "BUY") == 0 || StringFind(rest, "SELL") == 0)
                   return(true);
             }
@@ -1178,11 +1202,12 @@ bool CEvanGoldGrid::HasPendingOrderForGrid(const int grid_index)
 }
 
 //+------------------------------------------------------------------+
-//| Check and shift grids based on current price                       |
+//| Check if price has position                                        |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::HasPositionForGrid(const int grid_index)
+bool CEvanGoldGrid::HasPositionForPrice(const double price, const bool is_buy_order)
 {
-   string grid_tag = "Grid_" + IntegerToString(grid_index) + "_";
+   string price_str = DoubleToString(price, _Digits);
+   string order_prefix = "GP_" + price_str + "_";
    
    for(int i = 0; i < PositionsTotal(); i++)
    {
@@ -1194,9 +1219,9 @@ bool CEvanGoldGrid::HasPositionForGrid(const int grid_index)
          if(PositionGetInteger(POSITION_MAGIC) == m_magic_number && PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
             string comment = PositionGetString(POSITION_COMMENT);
-            if(StringFind(comment, grid_tag) == 0)
+            if(StringFind(comment, order_prefix) == 0)
             {
-               string rest = StringSubstr(comment, StringLen(grid_tag));
+               string rest = StringSubstr(comment, StringLen(order_prefix));
                if(StringFind(rest, "BUY") == 0 || StringFind(rest, "SELL") == 0)
                   return(true);
             }
@@ -1207,30 +1232,30 @@ bool CEvanGoldGrid::HasPositionForGrid(const int grid_index)
 }
 
 //+------------------------------------------------------------------+
-//| Check if grid index has any order (pending or position)            |
+//| Check if price has any order (pending or position)                 |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::HasOrderForGridIndex(const int grid_index)
+bool CEvanGoldGrid::HasOrderForPrice(const double price, const bool is_buy_order)
 {
    if(m_current_grid_mode == 3)
    {
-      bool has_buy = HasBuyOrderForGrid(grid_index);
-      bool has_sell = HasSellOrderForGrid(grid_index);
+      bool has_buy = HasPendingOrderForPrice(price, true) || HasPositionForPrice(price, true);
+      bool has_sell = HasPendingOrderForPrice(price, false) || HasPositionForPrice(price, false);
       
       if(!has_buy || !has_sell)
       {
-         Print(">>> DualMode Grid#", grid_index, " Status: Buy=", has_buy ? "YES" : "NO", " Sell=", has_sell ? "YES" : "NO");
+         Print(">>> DualMode Price=", DoubleToString(price, _Digits), " Status: Buy=", has_buy ? "YES" : "NO", " Sell=", has_sell ? "YES" : "NO");
       }
       
       return(has_buy && has_sell);
    }
    
-   return(HasPendingOrderForGrid(grid_index) || HasPositionForGrid(grid_index));
+   return(HasPendingOrderForPrice(price, is_buy_order) || HasPositionForPrice(price, is_buy_order));
 }
 
 //+------------------------------------------------------------------+
-//| Refill order at specific grid index                                |
+//| Refill order at specific price                                     |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::RefillOrderAtIndex(const int grid_index)
+bool CEvanGoldGrid::RefillOrderAtPrice(const double price, const bool is_buy_order)
 {
    bool is_backtest = (MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION));
    double take_profit = is_backtest ? m_take_profit : GetEditValue(EDIT_TAKE_PROFIT);
@@ -1255,13 +1280,6 @@ bool CEvanGoldGrid::RefillOrderAtIndex(const int grid_index)
       return(false);
    }
    
-   if(grid_index < 0 || grid_index >= m_grid_cache_count)
-   {
-      Print("Auto refill failed: Grid index #", grid_index, " out of range");
-      return(false);
-   }
-   
-   double target_price = m_grid_cache[grid_index].m_target_price;
    double current_bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double current_ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
@@ -1269,30 +1287,30 @@ bool CEvanGoldGrid::RefillOrderAtIndex(const int grid_index)
    {
       int refilled = 0;
       
-      if(!HasBuyOrderForGrid(grid_index))
+      if(!HasPendingOrderForPrice(price, true) && !HasPositionForPrice(price, true))
       {
-         double tp_buy = target_price + take_profit;
-         ENUM_ORDER_TYPE buy_type = (target_price < current_ask) ? ORDER_TYPE_BUY_LIMIT : ORDER_TYPE_BUY_STOP;
+         double tp_buy = price + take_profit;
+         ENUM_ORDER_TYPE buy_type = (price < current_ask) ? ORDER_TYPE_BUY_LIMIT : ORDER_TYPE_BUY_STOP;
          string type_name = (buy_type == ORDER_TYPE_BUY_LIMIT) ? "BUY_LIMIT" : "BUY_STOP";
-         string comment = "Grid_" + IntegerToString(grid_index) + "_" + type_name;
+         string comment = "GP_" + DoubleToString(price, _Digits) + "_" + type_name;
          
-         Print(">>> Refilling BUY order: GridIndex=", grid_index, " Price=", DoubleToString(target_price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp_buy, _Digits));
-         if(PlaceRefillOrder(buy_type, target_price, lot_size, tp_buy, comment))
+         Print(">>> Refilling BUY order: Price=", DoubleToString(price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp_buy, _Digits));
+         if(PlaceRefillOrder(buy_type, price, lot_size, tp_buy, comment))
          {
             refilled++;
             Print(">>> BUY order refilled successfully");
          }
       }
       
-      if(!HasSellOrderForGrid(grid_index))
+      if(!HasPendingOrderForPrice(price, false) && !HasPositionForPrice(price, false))
       {
-         double tp_sell = target_price - take_profit;
-         ENUM_ORDER_TYPE sell_type = (target_price > current_bid) ? ORDER_TYPE_SELL_LIMIT : ORDER_TYPE_SELL_STOP;
+         double tp_sell = price - take_profit;
+         ENUM_ORDER_TYPE sell_type = (price > current_bid) ? ORDER_TYPE_SELL_LIMIT : ORDER_TYPE_SELL_STOP;
          string type_name = (sell_type == ORDER_TYPE_SELL_LIMIT) ? "SELL_LIMIT" : "SELL_STOP";
-         string comment = "Grid_" + IntegerToString(grid_index) + "_" + type_name;
+         string comment = "GP_" + DoubleToString(price, _Digits) + "_" + type_name;
          
-         Print(">>> Refilling SELL order: GridIndex=", grid_index, " Price=", DoubleToString(target_price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp_sell, _Digits));
-         if(PlaceRefillOrder(sell_type, target_price, lot_size, tp_sell, comment))
+         Print(">>> Refilling SELL order: Price=", DoubleToString(price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp_sell, _Digits));
+         if(PlaceRefillOrder(sell_type, price, lot_size, tp_sell, comment))
          {
             refilled++;
             Print(">>> SELL order refilled successfully");
@@ -1307,23 +1325,21 @@ bool CEvanGoldGrid::RefillOrderAtIndex(const int grid_index)
       return(false);
    }
    
-   bool is_buy_order = m_grid_cache[grid_index].m_is_buy_order;
-   
-   if(HasOrderForGridIndex(grid_index))
+   if(HasOrderForPrice(price, is_buy_order))
    {
-      Print("Auto refill: Grid index #", grid_index, " already has order");
+      Print("Auto refill: Price=", DoubleToString(price, _Digits), " already has order");
       return(false);
    }
    
-   Print(">>> Refill decision: GridIndex=", grid_index, " TargetPrice=", DoubleToString(target_price, _Digits), " IsBuy=", is_buy_order ? "true" : "false", " Bid=", DoubleToString(current_bid, _Digits), " Ask=", DoubleToString(current_ask, _Digits));
+   Print(">>> Refill decision: Price=", DoubleToString(price, _Digits), " IsBuy=", is_buy_order ? "true" : "false", " Bid=", DoubleToString(current_bid, _Digits), " Ask=", DoubleToString(current_ask, _Digits));
    
-   double tp = is_buy_order ? (target_price + take_profit) : (target_price - take_profit);
+   double tp = is_buy_order ? (price + take_profit) : (price - take_profit);
    ENUM_ORDER_TYPE order_type;
    string type_name;
    
    if(is_buy_order)
    {
-      if(target_price < current_ask)
+      if(price < current_ask)
       {
          order_type = ORDER_TYPE_BUY_LIMIT;
          type_name = "BUY_LIMIT";
@@ -1336,7 +1352,7 @@ bool CEvanGoldGrid::RefillOrderAtIndex(const int grid_index)
    }
    else
    {
-      if(target_price > current_bid)
+      if(price > current_bid)
       {
          order_type = ORDER_TYPE_SELL_LIMIT;
          type_name = "SELL_LIMIT";
@@ -1348,19 +1364,19 @@ bool CEvanGoldGrid::RefillOrderAtIndex(const int grid_index)
       }
    }
    
-   string comment = "Grid_" + IntegerToString(grid_index) + "_" + type_name;
+   string comment = "GP_" + DoubleToString(price, _Digits) + "_" + type_name;
    
-   Print(">>> Sending refill order: GridIndex=", grid_index, " Type=", type_name, " Price=", DoubleToString(target_price, _Digits), " TP=", DoubleToString(tp, _Digits), " Lot=", lot_size, " Comment=", comment);
+   Print(">>> Sending refill order: Type=", type_name, " Price=", DoubleToString(price, _Digits), " TP=", DoubleToString(tp, _Digits), " Lot=", lot_size, " Comment=", comment);
    
-   if(PlaceRefillOrder(order_type, target_price, lot_size, tp, comment))
+   if(PlaceRefillOrder(order_type, price, lot_size, tp, comment))
    {
-      Print(">>> Auto refill success: GridIndex=", grid_index, " Price=", DoubleToString(target_price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp, _Digits));
+      Print(">>> Auto refill success: Price=", DoubleToString(price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp, _Digits));
       UpdateDisplay();
       return(true);
    }
    else
    {
-      Print(">>> Auto refill failed: GridIndex=", grid_index, " Type=", type_name, " Error=", GetLastError());
+      Print(">>> Auto refill failed: Type=", type_name, " Error=", GetLastError());
       return(false);
    }
 }
@@ -1617,17 +1633,19 @@ void CEvanGoldGrid::CreateDualSideOrder(SGridOrderInfo &orders[], int &order_ind
    orders[order_index].m_price = price;
    orders[order_index].m_tp = tp;
    orders[order_index].m_is_buy_order = is_buy_order;
-   orders[order_index].m_comment = "Grid_" + IntegerToString(grid_index) + "_" + type_name;
+   orders[order_index].m_comment = "GP_" + DoubleToString(price, _Digits) + "_" + type_name;
    
    Print("DualSide Order #", order_index + 1, ": Grid=", grid_index, " Price=", DoubleToString(price, _Digits), " Type=", type_name, " TP=", DoubleToString(tp, _Digits));
 }
 
 //+------------------------------------------------------------------+
-//| Check if grid has buy order (pending or position)                  |
+//| Check if price has buy order (pending or position)                 |
 //+------------------------------------------------------------------+
 bool CEvanGoldGrid::HasBuyOrderForGrid(const int grid_index)
 {
-   string grid_tag = "Grid_" + IntegerToString(grid_index) + "_";
+   double price = m_grid_cache[grid_index].m_price;
+   string price_str = DoubleToString(price, _Digits);
+   string order_prefix = "GP_" + price_str + "_";
    
    for(int i = 0; i < OrdersTotal(); i++)
    {
@@ -1639,9 +1657,9 @@ bool CEvanGoldGrid::HasBuyOrderForGrid(const int grid_index)
          if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && OrderGetString(ORDER_SYMBOL) == _Symbol)
          {
             string comment = OrderGetString(ORDER_COMMENT);
-            if(StringFind(comment, grid_tag) == 0)
+            if(StringFind(comment, order_prefix) == 0)
             {
-               string rest = StringSubstr(comment, StringLen(grid_tag));
+               string rest = StringSubstr(comment, StringLen(order_prefix));
                if(StringFind(rest, "BUY") == 0)
                {
                   Print(">>> HasBuyOrder: Found BUY pending order #", ticket, " Comment=", comment);
@@ -1662,9 +1680,9 @@ bool CEvanGoldGrid::HasBuyOrderForGrid(const int grid_index)
          if(PositionGetInteger(POSITION_MAGIC) == m_magic_number && PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
             string comment = PositionGetString(POSITION_COMMENT);
-            if(StringFind(comment, grid_tag) == 0)
+            if(StringFind(comment, order_prefix) == 0)
             {
-               string rest = StringSubstr(comment, StringLen(grid_tag));
+               string rest = StringSubstr(comment, StringLen(order_prefix));
                if(StringFind(rest, "BUY") == 0)
                {
                   Print(">>> HasBuyOrder: Found BUY position #", ticket, " Comment=", comment);
@@ -1678,11 +1696,13 @@ bool CEvanGoldGrid::HasBuyOrderForGrid(const int grid_index)
 }
 
 //+------------------------------------------------------------------+
-//| Check if grid has sell order (pending or position)                 |
+//| Check if price has sell order (pending or position)                |
 //+------------------------------------------------------------------+
 bool CEvanGoldGrid::HasSellOrderForGrid(const int grid_index)
 {
-   string grid_tag = "Grid_" + IntegerToString(grid_index) + "_";
+   double price = m_grid_cache[grid_index].m_price;
+   string price_str = DoubleToString(price, _Digits);
+   string order_prefix = "GP_" + price_str + "_";
    
    for(int i = 0; i < OrdersTotal(); i++)
    {
@@ -1694,9 +1714,9 @@ bool CEvanGoldGrid::HasSellOrderForGrid(const int grid_index)
          if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && OrderGetString(ORDER_SYMBOL) == _Symbol)
          {
             string comment = OrderGetString(ORDER_COMMENT);
-            if(StringFind(comment, grid_tag) == 0)
+            if(StringFind(comment, order_prefix) == 0)
             {
-               string rest = StringSubstr(comment, StringLen(grid_tag));
+               string rest = StringSubstr(comment, StringLen(order_prefix));
                if(StringFind(rest, "SELL") == 0)
                {
                   Print(">>> HasSellOrder: Found SELL pending order #", ticket, " Comment=", comment);
@@ -1717,9 +1737,9 @@ bool CEvanGoldGrid::HasSellOrderForGrid(const int grid_index)
          if(PositionGetInteger(POSITION_MAGIC) == m_magic_number && PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
             string comment = PositionGetString(POSITION_COMMENT);
-            if(StringFind(comment, grid_tag) == 0)
+            if(StringFind(comment, order_prefix) == 0)
             {
-               string rest = StringSubstr(comment, StringLen(grid_tag));
+               string rest = StringSubstr(comment, StringLen(order_prefix));
                if(StringFind(rest, "SELL") == 0)
                {
                   Print(">>> HasSellOrder: Found SELL position #", ticket, " Comment=", comment);
@@ -1866,14 +1886,14 @@ void CEvanGoldGrid::CheckAndShiftGrids(void)
 {
    double current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    
-   m_grid_lower_price = m_grid_cache[0].m_target_price;
-   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   m_grid_lower_price = m_grid_cache[0].m_price;
+   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_price;
    
    bool needs_update = false;
    
    for(int i = 0; i < m_grid_cache_count; i++)
    {
-      double grid_price = m_grid_cache[i].m_target_price;
+      double grid_price = m_grid_cache[i].m_price;
       bool has_position = HasPositionForGrid(i);
       bool has_pending = HasPendingOrderForGrid(i);
       
@@ -1971,8 +1991,8 @@ void CEvanGoldGrid::CheckAndShiftGrids(void)
             }
          }
          
-         double new_price = m_grid_cache[new_grid_index].m_target_price;
-         m_grid_cache[i].m_target_price = new_price;
+         double new_price = m_grid_cache[new_grid_index].m_price;
+         m_grid_cache[i].m_price = new_price;
          
          Print(">>> Moved grid #", i, " to price ", DoubleToString(new_price, _Digits));
          
@@ -1982,8 +2002,8 @@ void CEvanGoldGrid::CheckAndShiftGrids(void)
    
    if(needs_update)
    {
-      m_grid_lower_price = m_grid_cache[0].m_target_price;
-      m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+      m_grid_lower_price = m_grid_cache[0].m_price;
+      m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_price;
       Print(">>> Grid range updated: [", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
    }
 }
@@ -2040,9 +2060,9 @@ bool CEvanGoldGrid::ShiftGridUp(int grids_to_shift)
          }
       }
       
-      double old_price = m_grid_cache[i].m_target_price;
-      m_grid_cache[i].m_target_price = m_grid_cache[m_grid_cache_count - 1].m_target_price + m_grid_spacing;
-      double new_price = m_grid_cache[i].m_target_price;
+      double old_price = m_grid_cache[i].m_price;
+      m_grid_cache[i].m_price = m_grid_cache[m_grid_cache_count - 1].m_price + m_grid_spacing;
+      double new_price = m_grid_cache[i].m_price;
       
       Print(">>> Moving grid #", i, " from ", DoubleToString(old_price, _Digits), 
             " to ", DoubleToString(new_price, _Digits));
@@ -2109,8 +2129,8 @@ bool CEvanGoldGrid::ShiftGridUp(int grids_to_shift)
       }
    }
    
-   m_grid_lower_price = m_grid_cache[0].m_target_price;
-   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   m_grid_lower_price = m_grid_cache[0].m_price;
+   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_price;
    
    Print(">>> Grid shifted up. New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
    
@@ -2169,9 +2189,9 @@ bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
          }
       }
       
-      double old_price = m_grid_cache[i].m_target_price;
-      m_grid_cache[i].m_target_price = m_grid_cache[0].m_target_price - m_grid_spacing;
-      double new_price = m_grid_cache[i].m_target_price;
+      double old_price = m_grid_cache[i].m_price;
+      m_grid_cache[i].m_price = m_grid_cache[0].m_price - m_grid_spacing;
+      double new_price = m_grid_cache[i].m_price;
       
       Print(">>> Moving grid #", i, " from ", DoubleToString(old_price, _Digits), 
             " to ", DoubleToString(new_price, _Digits));
@@ -2238,8 +2258,8 @@ bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
       }
    }
    
-   m_grid_lower_price = m_grid_cache[0].m_target_price;
-   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   m_grid_lower_price = m_grid_cache[0].m_price;
+   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_price;
    
    Print(">>> Grid shifted down. New range=[", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
    
@@ -2291,7 +2311,7 @@ bool CEvanGoldGrid::MoveGridOrder(const int from_index, const int to_index)
       to_index < 0 || to_index >= m_grid_cache_count)
       return(false);
    
-   double new_price = m_grid_cache[to_index].m_target_price;
+   double new_price = m_grid_cache[to_index].m_price;
    bool is_buy = m_grid_cache[from_index].m_is_buy_order;
    
    Print(">>> Moving order from grid #", from_index, " to #", to_index, " Price=", DoubleToString(new_price, _Digits));
