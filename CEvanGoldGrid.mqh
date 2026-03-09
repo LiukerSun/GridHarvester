@@ -168,16 +168,13 @@ private:
    void   OnToggleAutoRefill(void);
    void   OnToggleGridMode(void);
    
-   void   CheckGridShift(void);
-   bool   ShiftGridUp(int grids_to_shift);
-   bool   ShiftGridDown(int grids_to_shift);
-   bool   ClosePositionAtGrid(const int grid_index);
-   bool   MoveGridOrder(const int from_index, const int to_index);
-   
    void   StartShiftThread(void);
    void   StopShiftThread(void);
    void   ShiftThreadFunc(void);
    void   CheckAndShiftGrids(void);
+   bool   ShiftGridUp(int grids_to_shift);
+   bool   ShiftGridDown(int grids_to_shift);
+   bool   ClosePositionAtGrid(const int grid_index);
 
 public:
             CEvanGoldGrid(void);
@@ -1835,63 +1832,7 @@ void CEvanGoldGrid::OnToggleProfitProtection(void)
 //+------------------------------------------------------------------+
 //| Check and shift grids based on current price                       |
 //+------------------------------------------------------------------+
-void CEvanGoldGrid::CheckGridShift(void)
-{
-   if(m_grid_cache_count == 0 || !m_is_grid_cache_valid)
-      return;
-   
-   datetime current_bar_time = iTime(_Symbol, PERIOD_CURRENT, 0);
-   if(current_bar_time == m_last_bar_time)
-      return;
-   
-   m_last_bar_time = current_bar_time;
-   
-   double current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   
-   m_grid_lower_price = m_grid_cache[0].m_target_price;
-   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
-   
-   bool is_above = current_price > m_grid_upper_price;
-   bool is_below = current_price < m_grid_lower_price;
-   
-   if(is_above)
-   {
-      int grids_to_shift = CalculateShiftCount(current_price, m_grid_upper_price, true);
-      if(grids_to_shift > 0)
-      {
-         Print(">>> Price above grid, need to shift ", grids_to_shift, " grid(s) up");
-         ShiftGridUp(grids_to_shift);
-      }
-   }
-   else if(is_below)
-   {
-      int grids_to_shift = CalculateShiftCount(current_price, m_grid_lower_price, false);
-      if(grids_to_shift > 0)
-      {
-         Print(">>> Price below grid, need to shift ", grids_to_shift, " grid(s) down");
-         ShiftGridDown(grids_to_shift);
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Calculate how many grids to shift                                  |
-//+------------------------------------------------------------------+
-int CEvanGoldGrid::CalculateShiftCount(double current_price, double boundary_price, bool is_up)
-{
-   double distance = MathAbs(current_price - boundary_price);
-   int grids_needed = (int)(distance / m_grid_spacing) + 1;
-   
-   if(grids_needed >= m_grid_cache_count)
-   {
-      grids_needed = m_grid_cache_count - 1;
-      Print(">>> Warning: Price too far, limiting shift to ", grids_needed, " grids");
-   }
-   
-   return(grids_needed);
-}
-
-//+------------------------------------------------------------------+
+void CEvanGoldGrid::CheckAndShiftGrids(void)
 //| Shift grid up (move lowest grids to top)                           |
 //+------------------------------------------------------------------+
 bool CEvanGoldGrid::ShiftGridUp(int grids_to_shift)
