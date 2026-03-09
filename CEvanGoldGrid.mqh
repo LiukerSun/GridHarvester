@@ -87,6 +87,9 @@ private:
    double m_grid_lower_price;
    datetime m_last_bar_time;
    
+   int    m_shift_thread_id;
+   bool   m_shift_thread_running;
+   
    SGridCacheInfo m_grid_cache[];
    int            m_grid_cache_count;
    bool           m_is_grid_cache_valid;
@@ -166,11 +169,15 @@ private:
    void   OnToggleGridMode(void);
    
    void   CheckGridShift(void);
-   int    CalculateShiftCount(double current_price, double boundary_price, bool is_up);
    bool   ShiftGridUp(int grids_to_shift);
    bool   ShiftGridDown(int grids_to_shift);
    bool   ClosePositionAtGrid(const int grid_index);
    bool   MoveGridOrder(const int from_index, const int to_index);
+   
+   void   StartShiftThread(void);
+   void   StopShiftThread(void);
+   void   ShiftThreadFunc(void);
+   void   CheckAndShiftGrids(void);
 
 public:
             CEvanGoldGrid(void);
@@ -212,6 +219,9 @@ CEvanGoldGrid::CEvanGoldGrid(void)
    m_grid_upper_price = 0;
    m_grid_lower_price = 0;
    m_last_bar_time = 0;
+   
+   m_shift_thread_id = 0;
+   m_shift_thread_running = false;
 }
 
 //+------------------------------------------------------------------+
@@ -256,6 +266,13 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
    m_grid_upper_price = 0;
    m_grid_lower_price = 0;
    m_last_bar_time = 0;
+   m_shift_thread_id = 0;
+   m_shift_thread_running = false;
+   
+   if(m_auto_shift_grid)
+   {
+      StartShiftThread();
+   }
    
    m_trade.SetExpertMagicNumber(m_magic_number);
    m_trade.SetDeviationInPoints(m_slippage);
@@ -279,6 +296,7 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
 //+------------------------------------------------------------------+
 void CEvanGoldGrid::Deinit(const int reason)
 {
+   StopShiftThread();
    DeletePanelObjects();
 }
 
@@ -735,7 +753,7 @@ void CEvanGoldGrid::OnTick(void)
    
    if(m_auto_shift_grid && m_is_grid_cache_valid)
    {
-      CheckGridShift();
+      ShiftThreadFunc();
    }
    
    CheckAndRefillGrid();
@@ -1815,7 +1833,7 @@ void CEvanGoldGrid::OnToggleProfitProtection(void)
 }
 
 //+------------------------------------------------------------------+
-//| Check if grid shift is needed                                      |
+//| Check and shift grids based on current price                       |
 //+------------------------------------------------------------------+
 void CEvanGoldGrid::CheckGridShift(void)
 {
@@ -2180,5 +2198,169 @@ bool CEvanGoldGrid::MoveGridOrder(const int from_index, const int to_index)
    Print(">>> Moving order from grid #", from_index, " to #", to_index, " Price=", DoubleToString(new_price, _Digits));
    
    return(true);
+}
+
+//+------------------------------------------------------------------+
+//| Start grid shift monitoring thread                                 |
+//+------------------------------------------------------------------+
+void CEvanGoldGrid::StartShiftThread(void)
+{
+   if(m_shift_thread_running)
+      return;
+   
+   m_shift_thread_running = true;
+   Print(">>> Grid shift monitoring started");
+}
+
+//+------------------------------------------------------------------+
+//| Stop grid shift monitoring thread                                  |
+//+------------------------------------------------------------------+
+void CEvanGoldGrid::StopShiftThread(void)
+{
+   m_shift_thread_running = false;
+   Print(">>> Grid shift monitoring stopped");
+}
+
+//+------------------------------------------------------------------+
+//| Grid shift thread main loop                                        |
+//+------------------------------------------------------------------+
+void CEvanGoldGrid::ShiftThreadFunc(void)
+{
+   if(!m_shift_thread_running || !m_auto_shift_grid)
+      return;
+   
+   if(!m_is_grid_cache_valid || m_grid_cache_count == 0)
+      return;
+   
+   CheckAndShiftGrids();
+}
+
+//+------------------------------------------------------------------+
+//| Check and shift grids based on current price                       |
+//+------------------------------------------------------------------+
+void CEvanGoldGrid::CheckAndShiftGrids(void)
+{
+   double current_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   m_grid_lower_price = m_grid_cache[0].m_target_price;
+   m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+   
+   bool needs_update = false;
+   
+   for(int i = 0; i < m_grid_cache_count; i++)
+   {
+      double grid_price = m_grid_cache[i].m_target_price;
+      bool has_position = HasPositionForGrid(i);
+      bool has_pending = HasPendingOrderForGrid(i);
+      
+      if(!has_position && !has_pending)
+         continue;
+      
+      bool should_move = false;
+      int new_grid_index = -1;
+      
+      if(m_grid_cache[i].m_is_buy_order)
+      {
+         if(current_price > grid_price + m_grid_spacing * 2)
+         {
+            int grids_above = (int)((current_price - grid_price) / m_grid_spacing);
+            new_grid_index = i + grids_above;
+            
+            if(new_grid_index >= m_grid_cache_count)
+               new_grid_index = m_grid_cache_count - 1;
+            
+            if(new_grid_index != i && !HasOrderForGridIndex(new_grid_index))
+               should_move = true;
+         }
+         else if(current_price < grid_price - m_grid_spacing * 2)
+         {
+            int grids_below = (int)((grid_price - current_price) / m_grid_spacing);
+            new_grid_index = i - grids_below;
+            
+            if(new_grid_index < 0)
+               new_grid_index = 0;
+            
+            if(new_grid_index != i && !HasOrderForGridIndex(new_grid_index))
+               should_move = true;
+         }
+      }
+      else
+      {
+         if(current_price < grid_price - m_grid_spacing * 2)
+         {
+            int grids_below = (int)((grid_price - current_price) / m_grid_spacing);
+            new_grid_index = i - grids_below;
+            
+            if(new_grid_index < 0)
+               new_grid_index = 0;
+            
+            if(new_grid_index != i && !HasOrderForGridIndex(new_grid_index))
+               should_move = true;
+         }
+         else if(current_price > grid_price + m_grid_spacing * 2)
+         {
+            int grids_above = (int)((current_price - grid_price) / m_grid_spacing);
+            new_grid_index = i + grids_above;
+            
+            if(new_grid_index >= m_grid_cache_count)
+               new_grid_index = m_grid_cache_count - 1;
+            
+            if(new_grid_index != i && !HasOrderForGridIndex(new_grid_index))
+               should_move = true;
+         }
+      }
+      
+      if(should_move && new_grid_index >= 0)
+      {
+         Print(">>> Grid #", i, " should move to #", new_grid_index, 
+               " Price=", DoubleToString(grid_price, _Digits), 
+               " Current=", DoubleToString(current_price, _Digits));
+         
+         if(has_position)
+         {
+            Print(">>> Closing position at grid #", i);
+            ClosePositionAtGrid(i);
+            Sleep(10);
+         }
+         
+         if(has_pending)
+         {
+            string grid_tag = "Grid_" + IntegerToString(i) + "_";
+            for(int j = OrdersTotal() - 1; j >= 0; j--)
+            {
+               ulong ticket = OrderGetTicket(j);
+               if(ticket == 0) continue;
+               
+               if(OrderSelect(ticket))
+               {
+                  if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && 
+                     OrderGetString(ORDER_SYMBOL) == _Symbol)
+                  {
+                     string comment = OrderGetString(ORDER_COMMENT);
+                     if(StringFind(comment, grid_tag) == 0)
+                     {
+                        m_trade.OrderDelete(ticket);
+                        Print(">>> Deleted pending order at grid #", i);
+                     }
+                  }
+               }
+            }
+         }
+         
+         double new_price = m_grid_cache[new_grid_index].m_target_price;
+         m_grid_cache[i].m_target_price = new_price;
+         
+         Print(">>> Moved grid #", i, " to price ", DoubleToString(new_price, _Digits));
+         
+         needs_update = true;
+      }
+   }
+   
+   if(needs_update)
+   {
+      m_grid_lower_price = m_grid_cache[0].m_target_price;
+      m_grid_upper_price = m_grid_cache[m_grid_cache_count - 1].m_target_price;
+      Print(">>> Grid range updated: [", m_grid_lower_price, " ~ ", m_grid_upper_price, "]");
+   }
 }
 //+------------------------------------------------------------------+
