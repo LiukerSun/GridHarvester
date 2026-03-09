@@ -139,4 +139,15 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
       g_expert.OnChartEvent(id, lparam, dparam, sparam);
    }
 }
+
+//+------------------------------------------------------------------+
+//| Expert timer function                                              |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+   if(g_expert != NULL)
+   {
+      g_expert.OnTimer();
+   }
+}
 //+------------------------------------------------------------------+

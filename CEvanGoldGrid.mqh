@@ -825,10 +825,6 @@ void CEvanGoldGrid::OnChartEvent(const int id, const long &lparam, const double 
          ChartRedraw();
       }
    }
-   else if(id == CHARTEVENT_TIMER)
-   {
-      OnTimer();
-   }
 }
 
 //+------------------------------------------------------------------+
