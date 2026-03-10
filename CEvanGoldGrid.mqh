@@ -1583,11 +1583,6 @@ void CEvanGoldGrid::OnCancelAllPending(void)
    m_manual_intervention = true;
    
    int canceled = 0;
-   MqlTradeRequest request;
-   MqlTradeResult result;
-   ZeroMemory(request);
-   ZeroMemory(result);
-   request.action = TRADE_ACTION_PENDING;
    
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
@@ -1597,18 +1592,13 @@ void CEvanGoldGrid::OnCancelAllPending(void)
       
       if(OrderSelect(ticket) && OrderGetInteger(ORDER_MAGIC) == m_magic_number && OrderGetString(ORDER_SYMBOL) == _Symbol)
       {
-         request.order = ticket;
-         if(OrderSendAsync(request, result))
-         {
-            canceled++;
-         }
-         else if(OrderSend(request, result) && result.retcode == TRADE_RETCODE_DONE)
+         if(m_trade.OrderDelete(ticket))
          {
             canceled++;
          }
          else
          {
-            Print("Cancel order failed: Ticket=", ticket, " RetCode=", result.retcode);
+            Print("Cancel order failed: Ticket=", ticket, " RetCode=", m_trade.ResultRetcode());
          }
       }
    }
@@ -1625,13 +1615,7 @@ void CEvanGoldGrid::OnCancelAndCloseAll(void)
 {
    m_manual_intervention = true;
    
-   MqlTradeRequest request;
-   MqlTradeResult result;
-   ZeroMemory(request);
-   ZeroMemory(result);
-   
    int canceled = 0;
-   request.action = TRADE_ACTION_PENDING;
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       ulong ticket = OrderGetTicket(i);
@@ -1640,18 +1624,13 @@ void CEvanGoldGrid::OnCancelAndCloseAll(void)
       
       if(OrderSelect(ticket) && OrderGetInteger(ORDER_MAGIC) == m_magic_number && OrderGetString(ORDER_SYMBOL) == _Symbol)
       {
-         request.order = ticket;
-         if(OrderSendAsync(request, result))
-         {
-            canceled++;
-         }
-         else if(OrderSend(request, result) && result.retcode == TRADE_RETCODE_DONE)
+         if(m_trade.OrderDelete(ticket))
          {
             canceled++;
          }
          else
          {
-            Print("Cancel order failed: Ticket=", ticket, " RetCode=", result.retcode);
+            Print("Cancel order failed: Ticket=", ticket, " RetCode=", m_trade.ResultRetcode());
          }
       }
    }
@@ -1662,7 +1641,6 @@ void CEvanGoldGrid::OnCancelAndCloseAll(void)
    }
    
    int closed = 0;
-   request.action = TRADE_ACTION_DEAL;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -1671,22 +1649,13 @@ void CEvanGoldGrid::OnCancelAndCloseAll(void)
       
       if(PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC) == m_magic_number && PositionGetString(POSITION_SYMBOL) == _Symbol)
       {
-         request.position = ticket;
-         request.volume = PositionGetDouble(POSITION_VOLUME);
-         request.type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-         request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         
-         if(OrderSendAsync(request, result))
-         {
-            closed++;
-         }
-         else if(OrderSend(request, result) && result.retcode == TRADE_RETCODE_DONE)
+         if(m_trade.PositionClose(ticket))
          {
             closed++;
          }
          else
          {
-            Print("Close position failed: Ticket=", ticket, " RetCode=", result.retcode);
+            Print("Close position failed: Ticket=", ticket, " RetCode=", m_trade.ResultRetcode());
          }
       }
    }
@@ -1702,11 +1671,6 @@ void CEvanGoldGrid::OnCancelAndCloseAll(void)
 void CEvanGoldGrid::BatchClosePositions(const bool close_loss_only, const bool close_profit_only)
 {
    int closed = 0;
-   MqlTradeRequest request;
-   MqlTradeResult result;
-   ZeroMemory(request);
-   ZeroMemory(result);
-   request.action = TRADE_ACTION_DEAL;
    
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -1723,31 +1687,19 @@ void CEvanGoldGrid::BatchClosePositions(const bool close_loss_only, const bool c
          if(close_profit_only && profit <= 0)
             continue;
          
-         request.position = ticket;
-         request.volume = PositionGetDouble(POSITION_VOLUME);
-         
          if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
          {
-            request.type = ORDER_TYPE_SELL;
-            request.price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            if(m_trade.PositionClose(ticket))
+               closed++;
+            else
+               Print("Close BUY position failed: Ticket=", ticket, " RetCode=", m_trade.ResultRetcode());
          }
          else
          {
-            request.type = ORDER_TYPE_BUY;
-            request.price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         }
-         
-         if(OrderSendAsync(request, result))
-         {
-            closed++;
-         }
-         else if(OrderSend(request, result) && result.retcode == TRADE_RETCODE_DONE)
-         {
-            closed++;
-         }
-         else
-         {
-            Print("Close position failed: Ticket=", ticket, " RetCode=", result.retcode);
+            if(m_trade.PositionClose(ticket))
+               closed++;
+            else
+               Print("Close SELL position failed: Ticket=", ticket, " RetCode=", m_trade.ResultRetcode());
          }
       }
    }
@@ -1957,13 +1909,7 @@ void CEvanGoldGrid::StopAllTrading(void)
    m_trading_stopped = true;
    m_auto_refill_enabled = false;
    
-   MqlTradeRequest request;
-   MqlTradeResult result;
-   ZeroMemory(request);
-   ZeroMemory(result);
-   
    int canceled = 0;
-   request.action = TRADE_ACTION_PENDING;
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       ulong ticket = OrderGetTicket(i);
@@ -1972,12 +1918,7 @@ void CEvanGoldGrid::StopAllTrading(void)
       
       if(OrderSelect(ticket) && OrderGetInteger(ORDER_MAGIC) == m_magic_number && OrderGetString(ORDER_SYMBOL) == _Symbol)
       {
-         request.order = ticket;
-         if(OrderSendAsync(request, result))
-         {
-            canceled++;
-         }
-         else if(OrderSend(request, result) && result.retcode == TRADE_RETCODE_DONE)
+         if(m_trade.OrderDelete(ticket))
          {
             canceled++;
          }
@@ -1990,7 +1931,6 @@ void CEvanGoldGrid::StopAllTrading(void)
    }
    
    int closed = 0;
-   request.action = TRADE_ACTION_DEAL;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -1999,16 +1939,7 @@ void CEvanGoldGrid::StopAllTrading(void)
       
       if(PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC) == m_magic_number && PositionGetString(POSITION_SYMBOL) == _Symbol)
       {
-         request.position = ticket;
-         request.volume = PositionGetDouble(POSITION_VOLUME);
-         request.type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-         request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         
-         if(OrderSendAsync(request, result))
-         {
-            closed++;
-         }
-         else if(OrderSend(request, result) && result.retcode == TRADE_RETCODE_DONE)
+         if(m_trade.PositionClose(ticket))
          {
             closed++;
          }
@@ -2141,26 +2072,21 @@ void CEvanGoldGrid::CheckAndShiftGrids(void)
                 ulong ticket = OrderGetTicket(j);
                 if(ticket == 0) continue;
                 
-                if(OrderSelect(ticket))
+             if(OrderSelect(ticket))
+             {
+                if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && 
+                   OrderGetString(ORDER_SYMBOL) == _Symbol)
                 {
-                   if(OrderGetInteger(ORDER_MAGIC) == m_magic_number && 
-                      OrderGetString(ORDER_SYMBOL) == _Symbol)
+                   string comment = OrderGetString(ORDER_COMMENT);
+                   if(StringFind(comment, grid_tag) == 0)
                    {
-                      string comment = OrderGetString(ORDER_COMMENT);
-                      if(StringFind(comment, grid_tag) == 0)
+                      if(m_trade.OrderDelete(ticket))
                       {
-                         request.order = ticket;
-                         if(OrderSendAsync(request, result))
-                         {
-                            Print(">>> Deleted pending order at grid #", i);
-                         }
-                         else
-                         {
-                            OrderSend(request, result);
-                         }
+                         Print(">>> Deleted pending order at grid #", i);
                       }
                    }
                 }
+             }
              }
           }
           
@@ -2358,9 +2284,6 @@ bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
        if(HasPendingOrderForGrid(i))
        {
           string grid_tag = "Grid_" + IntegerToString(i) + "_";
-          ZeroMemory(request);
-          ZeroMemory(result);
-          request.action = TRADE_ACTION_PENDING;
           
           for(int j = OrdersTotal() - 1; j >= 0; j--)
           {
@@ -2375,23 +2298,18 @@ bool CEvanGoldGrid::ShiftGridDown(int grids_to_shift)
                    string comment = OrderGetString(ORDER_COMMENT);
                    if(StringFind(comment, grid_tag) == 0)
                    {
-                      request.order = ticket;
-                      if(OrderSendAsync(request, result))
+                      if(m_trade.OrderDelete(ticket))
                       {
                          Print(">>> Deleted pending order at grid #", i);
-                      }
-                      else
-                      {
-                         OrderSend(request, result);
                       }
                    }
                 }
              }
           }
        }
-      
-      double old_price = m_grid_cache[i].m_price;
-      m_grid_cache[i].m_price = m_grid_cache[0].m_price - m_grid_spacing;
+       
+       double old_price = m_grid_cache[i].m_price;
+       m_grid_cache[i].m_price = m_grid_cache[0].m_price - m_grid_spacing;
       double new_price = m_grid_cache[i].m_price;
       
       Print(">>> Moving grid #", i, " from ", DoubleToString(old_price, _Digits), 
@@ -2487,30 +2405,14 @@ bool CEvanGoldGrid::ClosePositionAtGrid(const int grid_index)
             string comment = PositionGetString(POSITION_COMMENT);
             if(StringFind(comment, grid_tag) == 0)
             {
-               MqlTradeRequest request;
-               MqlTradeResult result;
-               ZeroMemory(request);
-               ZeroMemory(result);
-               
-               request.action = TRADE_ACTION_DEAL;
-               request.position = ticket;
-               request.volume = PositionGetDouble(POSITION_VOLUME);
-               request.type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-               request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-               
-               if(OrderSendAsync(request, result))
-               {
-                  Print(">>> Closed position at grid #", grid_index, " Ticket=", ticket);
-                  return(true);
-               }
-               else if(OrderSend(request, result) && result.retcode == TRADE_RETCODE_DONE)
+               if(m_trade.PositionClose(ticket))
                {
                   Print(">>> Closed position at grid #", grid_index, " Ticket=", ticket);
                   return(true);
                }
                else
                {
-                  Print(">>> Failed to close position at grid #", grid_index, " RetCode=", result.retcode);
+                  Print(">>> Failed to close position at grid #", grid_index, " RetCode=", m_trade.ResultRetcode());
                }
             }
          }
