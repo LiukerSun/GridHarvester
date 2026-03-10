@@ -4,7 +4,7 @@
 //|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, MetaQuotes Software Corp."
-#property version   "1.53"
+#property version   "1.55"
 #property link      "https://www.mql5.com"
 #include <Trade/Trade.mqh>
 
@@ -70,15 +70,14 @@ private:
    bool   m_auto_refill_enabled;
    bool   m_manual_intervention;
    
-   bool   m_profit_protection_enabled;
-   double m_profit_threshold;
-   double m_profit_trigger;
-   double m_max_profit_ever;
-   bool   m_protection_activated;
+   bool   m_trailing_stop_enabled;
+   double m_profit_trailing_percent;
    bool   m_trading_stopped;
    
    double m_initial_equity;
-   double m_max_loss_amount;
+   double m_highest_equity;
+   double m_max_drawdown_percent;
+   double m_dynamic_stop_loss_line;
    
    bool   m_auto_shift_grid;
    int    m_shift_trigger_bars;
@@ -106,13 +105,13 @@ private:
       BTN_CANCEL_CLOSE = 6,
       BTN_REFRESH = 7,
       BTN_AUTO_REFILL = 8,
-      BTN_PROFIT_PROTECT = 9,
+      BTN_TRAILING_STOP = 9,
       EDIT_CENTER_PRICE = 101,
       EDIT_GRID_COUNT = 102,
       EDIT_GRID_SPACING = 103,
       EDIT_TAKE_PROFIT = 104,
       EDIT_LOT_SIZE = 105,
-      EDIT_RISK_AMOUNT = 108,
+      EDIT_MAX_DRAWDOWN = 108,
       LABEL_STATUS = 201,
       LABEL_POSITIONS = 202,
       LABEL_PENDING = 203,
@@ -121,7 +120,8 @@ private:
       LABEL_EQUITY = 206,
       LABEL_DRAWDOWN = 207,
       LABEL_RUN_PROFIT = 208,
-      LABEL_MAX_LOSS = 209
+      LABEL_HIGHEST_EQUITY = 209,
+      LABEL_STOP_LOSS_LINE = 210
    };
    
    bool   InitializeParameters(void);
@@ -157,22 +157,21 @@ private:
    bool   HasSellOrderForGrid(const int grid_index);
    
    double GetTotalProfit(void);
-   void   CheckProfitProtection(void);
    void   StopAllTrading(void);
-   void   ResetProfitProtection(void);
-    void   OnToggleProfitProtection(void);
-    
-    void   OnGenerateGrid(void);
-    void   OnCloseLosingPositions(void);
-    void   OnCloseProfitingPositions(void);
-    void   OnCloseAllPositions(void);
-    void   OnCancelAllPending(void);
-    void   OnCancelAndCloseAll(void);
-    void   OnRefreshCenterPrice(void);
-    void   OnToggleAutoRefill(void);
-    void   OnToggleGridMode(void);
-    
-    void   StartShiftThread(void);
+   void   UpdateTrailingStop(void);
+   
+   void   OnGenerateGrid(void);
+   void   OnCloseLosingPositions(void);
+   void   OnCloseProfitingPositions(void);
+   void   OnCloseAllPositions(void);
+   void   OnCancelAllPending(void);
+   void   OnCancelAndCloseAll(void);
+   void   OnRefreshCenterPrice(void);
+   void   OnToggleAutoRefill(void);
+   void   OnToggleGridMode(void);
+   void   OnToggleTrailingStop(void);
+   
+   void   StartShiftThread(void);
    void   StopShiftThread(void);
    void   ShiftThreadFunc(void);
    void   CheckAndShiftGrids(void);
@@ -185,7 +184,7 @@ public:
             CEvanGoldGrid(void);
            ~CEvanGoldGrid(void);
     
-    bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid);
+    bool   Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool trailing_stop_enabled, const double profit_trailing_percent, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_drawdown_percent, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid);
     void   Deinit(const int reason);
     void   OnTick(void);
     void   OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
@@ -207,15 +206,14 @@ CEvanGoldGrid::CEvanGoldGrid(void)
    m_is_grid_cache_valid = false;
    m_last_check_time = 0;
    
-   m_profit_protection_enabled = true;
-   m_profit_threshold = 80.0;
-   m_profit_trigger = 25.0;
-   m_max_profit_ever = 0.0;
-   m_protection_activated = false;
+   m_trailing_stop_enabled = false;
+   m_profit_trailing_percent = 50.0;
    m_trading_stopped = false;
    
    m_initial_equity = 0.0;
-   m_max_loss_amount = 500.0;
+   m_highest_equity = 0.0;
+   m_max_drawdown_percent = 2.0;
+   m_dynamic_stop_loss_line = 0.0;
    
    m_auto_shift_grid = false;
    m_shift_trigger_bars = 3;
@@ -239,7 +237,7 @@ CEvanGoldGrid::~CEvanGoldGrid(void)
 //+------------------------------------------------------------------+
 //| Initialize the expert with input parameters                        |
 //+------------------------------------------------------------------+
-bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool profit_protection, const double profit_threshold, const double profit_trigger, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_loss_amount, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid)
+bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const int grid_mode, const double grid_spacing, const double take_profit, const double lot_size, const int max_orders, const int magic_number, const int slippage, const int start_hour, const int end_hour, const bool allow_monday, const bool allow_friday, const bool trailing_stop_enabled, const double profit_trailing_percent, const color panel_bg_color, const color button_color, const int panel_x, const int panel_y, const double max_drawdown_percent, const bool auto_shift_grid, const int shift_trigger_bars, const bool auto_start_grid)
 {
    m_center_price = center_price;
    m_grid_count = grid_count;
@@ -254,20 +252,21 @@ bool CEvanGoldGrid::Init(const double center_price, const int grid_count, const 
    m_end_hour = end_hour;
    m_allow_monday = allow_monday;
    m_allow_friday = allow_friday;
-   m_profit_protection_enabled = profit_protection;
-   m_profit_threshold = profit_threshold;
-   m_profit_trigger = profit_trigger;
+   m_trailing_stop_enabled = trailing_stop_enabled;
+   m_profit_trailing_percent = profit_trailing_percent;
    m_panel_bg_color = panel_bg_color;
    m_button_color = button_color;
    m_panel_x = panel_x;
    m_panel_y = panel_y;
-   m_max_loss_amount = max_loss_amount;
+   m_max_drawdown_percent = max_drawdown_percent;
    m_auto_shift_grid = auto_shift_grid;
    m_shift_trigger_bars = shift_trigger_bars;
    m_auto_start_grid = auto_start_grid;
    
    m_current_grid_mode = m_grid_mode;
    m_initial_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   m_highest_equity = m_initial_equity;
+   m_dynamic_stop_loss_line = m_initial_equity * (1 - m_max_drawdown_percent / 100.0);
    m_grid_upper_price = 0;
    m_grid_lower_price = 0;
    m_last_bar_time = 0;
@@ -448,8 +447,8 @@ void CEvanGoldGrid::CreateTradingPanel(void)
    CreateEdit("EDIT_105", start_x + label_width + 5, m_panel_y_pos + row * row_height, edit_width, 20, DoubleToString(m_lot_size, 2), EDIT_LOT_SIZE);
    row += 2;
    
-   CreateLabel("LBL_RISK_AMOUNT", start_x, m_panel_y_pos + row * row_height, "最大亏损$:", 0);
-   CreateEdit("EDIT_108", start_x + label_width + 5, m_panel_y_pos + row * row_height, edit_width, 20, DoubleToString(m_max_loss_amount, 0), 108);
+   CreateLabel("LBL_MAX_DRAWDOWN", start_x, m_panel_y_pos + row * row_height, "最大回撤%:", 0);
+   CreateEdit("EDIT_108", start_x + label_width + 5, m_panel_y_pos + row * row_height, edit_width, 20, DoubleToString(m_max_drawdown_percent, 1), 108);
    row += 2;
    
    string mode_text = "做多";
@@ -499,10 +498,10 @@ void CEvanGoldGrid::CreateTradingPanel(void)
    ObjectSetInteger(0, "BTN_AUTO_REFILL", OBJPROP_BGCOLOR, refill_color);
    btn_y += btn_height + btn_spacing;
    
-   string protect_text = m_profit_protection_enabled ? "盈利保护:开" : "盈利保护:关";
-   color protect_color = m_profit_protection_enabled ? clrLimeGreen : clrGray;
-   CreateButton("BTN_PROFIT_PROTECT", btn_start_x, btn_y, btn_width, btn_height, protect_text, BTN_PROFIT_PROTECT);
-   ObjectSetInteger(0, "BTN_PROFIT_PROTECT", OBJPROP_BGCOLOR, protect_color);
+   string trailing_text = m_trailing_stop_enabled ? "移动止损：开" : "移动止损：关";
+   color trailing_color = m_trailing_stop_enabled ? clrLimeGreen : clrGray;
+   CreateButton("BTN_TRAILING_STOP", btn_start_x, btn_y, btn_width, btn_height, trailing_text, BTN_TRAILING_STOP);
+   ObjectSetInteger(0, "BTN_TRAILING_STOP", OBJPROP_BGCOLOR, trailing_color);
    btn_y += btn_height + 15;
    
    int status_label_width = 120;
@@ -521,7 +520,9 @@ void CEvanGoldGrid::CreateTradingPanel(void)
    btn_y += 22;
    CreateLabel("LBL_RUN_PROFIT", status_start_x, btn_y, "运行盈亏：$0.00", LABEL_RUN_PROFIT);
    btn_y += 22;
-   CreateLabel("LBL_MAX_LOSS", status_start_x, btn_y, "风控限额：$0.00", LABEL_MAX_LOSS);
+   CreateLabel("LBL_HIGHEST_EQUITY", status_start_x, btn_y, "最高净值：$0.00", LABEL_HIGHEST_EQUITY);
+   btn_y += 22;
+   CreateLabel("LBL_STOP_LOSS_LINE", status_start_x, btn_y, "止损线：$0.00", LABEL_STOP_LOSS_LINE);
    btn_y += 22;
    CreateLabel("LBL_PRICE", status_start_x, btn_y, "价格：", LABEL_CURRENT_PRICE);
    btn_y += 28;
@@ -666,29 +667,6 @@ void CEvanGoldGrid::UpdateDisplay(void)
    else
       ObjectSetInteger(0, "LBL_RUN_PROFIT", OBJPROP_COLOR, clrWhite);
    
-   if(m_max_loss_amount > 0 && m_initial_equity > 0)
-   {
-      double current_loss = m_initial_equity - current_equity;
-      double loss_remaining = m_max_loss_amount - current_loss;
-      ObjectSetString(0, "LBL_MAX_LOSS", OBJPROP_TEXT, "最大亏损：$" + DoubleToString(m_max_loss_amount, 2) + " (已亏$" + DoubleToString(current_loss, 2) + " 剩余$" + DoubleToString(loss_remaining, 2) + ")");
-      if(current_loss > m_max_loss_amount * 0.8)
-         ObjectSetInteger(0, "LBL_MAX_LOSS", OBJPROP_COLOR, clrRed);
-      else if(current_loss > m_max_loss_amount * 0.5)
-         ObjectSetInteger(0, "LBL_MAX_LOSS", OBJPROP_COLOR, clrOrange);
-      else
-         ObjectSetInteger(0, "LBL_MAX_LOSS", OBJPROP_COLOR, clrLimeGreen);
-   }
-   else if(m_max_loss_amount > 0)
-   {
-      ObjectSetString(0, "LBL_MAX_LOSS", OBJPROP_TEXT, "最大亏损：等待初始化...");
-      ObjectSetInteger(0, "LBL_MAX_LOSS", OBJPROP_COLOR, clrWhite);
-   }
-   else
-   {
-      ObjectSetString(0, "LBL_MAX_LOSS", OBJPROP_TEXT, "最大亏损：无限制");
-      ObjectSetInteger(0, "LBL_MAX_LOSS", OBJPROP_COLOR, clrGray);
-   }
-   
    double drawdown_pct = 0.0;
    if(m_initial_equity > 0)
    {
@@ -702,8 +680,23 @@ void CEvanGoldGrid::UpdateDisplay(void)
    else
       ObjectSetInteger(0, "LBL_DRAWDOWN", OBJPROP_COLOR, clrLimeGreen);
    
+   ObjectSetString(0, "LBL_HIGHEST_EQUITY", OBJPROP_TEXT, "最高净值：$" + DoubleToString(m_highest_equity, 2));
+   if(m_highest_equity > m_initial_equity)
+      ObjectSetInteger(0, "LBL_HIGHEST_EQUITY", OBJPROP_COLOR, clrLimeGreen);
+   else
+      ObjectSetInteger(0, "LBL_HIGHEST_EQUITY", OBJPROP_COLOR, clrWhite);
+   
+   ObjectSetString(0, "LBL_STOP_LOSS_LINE", OBJPROP_TEXT, "止损线：$" + DoubleToString(m_dynamic_stop_loss_line, 2) + " (回撤" + DoubleToString(m_max_drawdown_percent, 1) + "%)");
+   double current_drawdown_from_high = (m_highest_equity > 0) ? ((m_highest_equity - current_equity) / m_highest_equity * 100.0) : 0.0;
+   if(current_drawdown_from_high > m_max_drawdown_percent * 0.8)
+      ObjectSetInteger(0, "LBL_STOP_LOSS_LINE", OBJPROP_COLOR, clrRed);
+   else if(current_drawdown_from_high > m_max_drawdown_percent * 0.5)
+      ObjectSetInteger(0, "LBL_STOP_LOSS_LINE", OBJPROP_COLOR, clrOrange);
+   else
+      ObjectSetInteger(0, "LBL_STOP_LOSS_LINE", OBJPROP_COLOR, clrLimeGreen);
+   
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   ObjectSetString(0, "LBL_PRICE", OBJPROP_TEXT, "价格: " + DoubleToString(bid, _Digits));
+   ObjectSetString(0, "LBL_PRICE", OBJPROP_TEXT, "价格：" + DoubleToString(bid, _Digits));
    
    if(m_trading_stopped)
    {
@@ -762,12 +755,22 @@ void CEvanGoldGrid::SetEditValue(const int id, const double value)
 //+------------------------------------------------------------------+
 void CEvanGoldGrid::OnTick(void)
 {
-   if(m_max_loss_amount > 0 && m_initial_equity > 0)
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   
+   if(current_equity > m_highest_equity)
    {
-      double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
-      double loss = m_initial_equity - current_equity;
-      if(loss >= m_max_loss_amount)
+      m_highest_equity = current_equity;
+      m_dynamic_stop_loss_line = m_highest_equity * (1 - m_max_drawdown_percent / 100.0);
+   }
+   
+   if(m_initial_equity > 0 && m_max_drawdown_percent > 0)
+   {
+      if(current_equity <= m_dynamic_stop_loss_line)
       {
+         Print(">>> DYNAMIC STOP LOSS TRIGGERED! Equity=", DoubleToString(current_equity, 2), 
+               " HighestEquity=", DoubleToString(m_highest_equity, 2),
+               " StopLine=", DoubleToString(m_dynamic_stop_loss_line, 2),
+               " Drawdown=", DoubleToString((m_highest_equity - current_equity) / m_highest_equity * 100.0, 2), "%");
          StopAllTrading();
          return;
       }
@@ -817,8 +820,8 @@ void CEvanGoldGrid::OnChartEvent(const int id, const long &lparam, const double 
             OnToggleGridMode();
          else if(clicked_obj == "BTN_AUTO_REFILL")
             OnToggleAutoRefill();
-         else if(clicked_obj == "BTN_PROFIT_PROTECT")
-            OnToggleProfitProtection();
+         else if(clicked_obj == "BTN_TRAILING_STOP")
+            OnToggleTrailingStop();
          
          ObjectSetInteger(0, clicked_obj, OBJPROP_STATE, false);
          ChartRedraw();
@@ -906,6 +909,103 @@ void CEvanGoldGrid::OnTimer(void)
    if(m_auto_refill_enabled && !m_manual_intervention && m_is_grid_cache_valid && m_grid_cache_count > 0)
    {
       CheckAndRefillGrid();
+   }
+   
+   if(m_trailing_stop_enabled && m_is_grid_cache_valid && m_grid_cache_count > 0)
+   {
+      UpdateTrailingStop();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Update trailing stop to lock profits                               |
+//+------------------------------------------------------------------+
+void CEvanGoldGrid::UpdateTrailingStop(void)
+{
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetInteger(POSITION_MAGIC) == m_magic_number && 
+            PositionGetString(POSITION_SYMBOL) == _Symbol)
+         {
+            ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+            double current_sl = PositionGetDouble(POSITION_SL);
+            double current_price = (pos_type == POSITION_TYPE_BUY) ? 
+                                   SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                                   SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+            
+            double profit_points = (pos_type == POSITION_TYPE_BUY) ? 
+                                   (current_price - open_price) / point : 
+                                   (open_price - current_price) / point;
+            
+            if(profit_points <= 0)
+               continue;
+            
+            double breakeven_threshold = m_grid_spacing / point;
+            double trailing_step = m_grid_spacing * m_profit_trailing_percent / 100.0;
+            if(trailing_step < point * 5)
+               trailing_step = point * 5;
+            
+            double new_sl = 0;
+            
+            if(profit_points >= breakeven_threshold)
+            {
+               if(pos_type == POSITION_TYPE_BUY)
+               {
+                  new_sl = open_price + point * 0.5;
+                  
+                  if(profit_points >= (breakeven_threshold + trailing_step * 2 / point))
+                  {
+                     double locked_profit = profit_points - (trailing_step * 2 / point);
+                     new_sl = open_price + locked_profit * point;
+                  }
+                  
+                  if(new_sl <= current_sl + point * 0.1 && current_sl > 0)
+                     continue;
+               }
+               else
+               {
+                  new_sl = open_price - point * 0.5;
+                  
+                  if(profit_points >= (breakeven_threshold + trailing_step * 2 / point))
+                  {
+                     double locked_profit = profit_points - (trailing_step * 2 / point);
+                     new_sl = open_price - locked_profit * point;
+                  }
+                  
+                  if(new_sl >= current_sl - point * 0.1 && current_sl > 0)
+                     continue;
+               }
+               
+               MqlTradeRequest request;
+               MqlTradeResult result;
+               ZeroMemory(request);
+               ZeroMemory(result);
+               
+               request.action = TRADE_ACTION_SLTP;
+               request.position = ticket;
+               request.sl = NormalizeDouble(new_sl, _Digits);
+               request.tp = PositionGetDouble(POSITION_TP);
+               
+               if(OrderSend(request, result))
+               {
+                  if(result.retcode == TRADE_RETCODE_DONE)
+                  {
+                     Print(">>> TrailingStop: Ticket=", ticket, 
+                           " Profit=", DoubleToString(profit_points, 1), " pts",
+                           " NewSL=", DoubleToString(new_sl, _Digits));
+                  }
+               }
+            }
+         }
+      }
    }
 }
 
@@ -1798,32 +1898,6 @@ double CEvanGoldGrid::GetTotalProfit(void)
 }
 
 //+------------------------------------------------------------------+
-//| Check profit protection conditions                                 |
-//+------------------------------------------------------------------+
-void CEvanGoldGrid::CheckProfitProtection(void)
-{
-   double current_profit = GetTotalProfit();
-   
-   if(current_profit > m_max_profit_ever)
-   {
-      m_max_profit_ever = current_profit;
-   }
-   
-   double dynamic_activation = (double)m_grid_count * m_grid_spacing * 2.0;
-   double dynamic_trigger = (double)m_grid_count * m_grid_spacing * 0.5;
-   
-   if(!m_protection_activated && current_profit >= dynamic_activation)
-   {
-      m_protection_activated = true;
-   }
-   
-   if(m_protection_activated && current_profit < dynamic_trigger)
-   {
-      StopAllTrading();
-   }
-}
-
-//+------------------------------------------------------------------+
 //| Stop all trading and close positions                               |
 //+------------------------------------------------------------------+
 void CEvanGoldGrid::StopAllTrading(void)
@@ -1873,32 +1947,21 @@ void CEvanGoldGrid::StopAllTrading(void)
 }
 
 //+------------------------------------------------------------------+
-//| Reset profit protection state                                      |
+//| Toggle trailing stop on/off                                        |
 //+------------------------------------------------------------------+
-void CEvanGoldGrid::ResetProfitProtection(void)
+void CEvanGoldGrid::OnToggleTrailingStop(void)
 {
-   m_max_profit_ever = 0.0;
-   m_protection_activated = false;
-   m_trading_stopped = false;
-   Print(">>> Profit protection reset");
-}
-
-//+------------------------------------------------------------------+
-//| Toggle profit protection on/off                                    |
-//+------------------------------------------------------------------+
-void CEvanGoldGrid::OnToggleProfitProtection(void)
-{
-   m_profit_protection_enabled = !m_profit_protection_enabled;
+   m_trailing_stop_enabled = !m_trailing_stop_enabled;
    
-   if(m_profit_protection_enabled)
+   if(m_trailing_stop_enabled)
    {
-      ResetProfitProtection();
+      Print(">>> Trailing Stop enabled");
    }
    
-   string protect_text = m_profit_protection_enabled ? "盈利保护：开" : "盈利保护：关";
-   color protect_color = m_profit_protection_enabled ? clrLimeGreen : clrGray;
-   ObjectSetString(0, "BTN_PROFIT_PROTECT", OBJPROP_TEXT, protect_text);
-   ObjectSetInteger(0, "BTN_PROFIT_PROTECT", OBJPROP_BGCOLOR, protect_color);
+   string trailing_text = m_trailing_stop_enabled ? "移动止损：开" : "移动止损：关";
+   color trailing_color = m_trailing_stop_enabled ? clrLimeGreen : clrGray;
+   ObjectSetString(0, "BTN_TRAILING_STOP", OBJPROP_TEXT, trailing_text);
+   ObjectSetInteger(0, "BTN_TRAILING_STOP", OBJPROP_BGCOLOR, trailing_color);
    ChartRedraw();
 }
 
